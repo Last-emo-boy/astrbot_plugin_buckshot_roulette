@@ -1,0 +1,13 @@
+{
+    "admin": {
+      "description": "游戏管理员，可强制结束游戏",
+      "type": "list",
+      "default": []
+    },
+    "maxWaitTime": {
+      "description": "创建游戏后，等待玩家2的最大时间(秒)",
+      "type": "int",
+      "default": 180
+    }
+  }
+  

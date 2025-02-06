@@ -1,6 +1,20 @@
-name: helloworld # 这是你的插件的唯一识别名。
-desc: 这是 AstrBot 的默认插件，支持关键词回复。 # 插件简短描述
-help: 输入 /keyword 查看关键词回复帮助。 # 插件的帮助信息
-version: v1.3 # 插件版本号。格式：v1.1.1 或者 v1.1
-author: Soulter # 作者
-repo: https://github.com/Soulter/helloworld # 插件的仓库地址
+name: astrbot_plugin_buckshot_roulette  # 插件的唯一识别名
+desc: 恶魔轮盘 - Buckshot Roulette       # 插件的简短描述
+help: | 
+  这是一个在 AstrBot 上运行的恶魔轮盘游戏插件，支持在群聊中进行 2 人对战，通过随机子弹与多种道具进行博弈。
+
+  指令示例：
+    - /恶魔轮盘 创建游戏
+    - /恶魔轮盘 加入游戏
+    - /恶魔轮盘 开始游戏
+    - /恶魔轮盘 对战信息
+    - /恶魔轮盘 结束游戏
+
+  游戏流程：
+    1. 玩家1使用「/恶魔轮盘 创建游戏」等待另一位玩家加入；
+    2. 玩家2使用「/恶魔轮盘 加入游戏」后，玩家1再使用「/恶魔轮盘 开始游戏」进入对战；
+    3. 输入「自己」或「对方」来开枪，输入道具名来使用道具，直到一方倒下或主动结束。
+
+version: v1.0.0 # 插件版本号。格式：v1.1.1 或者 v1.1
+author: w33d # 作者
+repo: https://github.com/Last-emo-boy/astrbot_plugin_buckshot_roulette # 插件的仓库地址
