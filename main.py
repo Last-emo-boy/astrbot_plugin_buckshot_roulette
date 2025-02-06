@@ -37,17 +37,15 @@ class BuckshotRoulette(Star):
         """
         super().__init__(context)
 
-        # 如果未定义 _conf_schema.json 或者没有配置，给出默认
         if not config:
             config = {}
-
-        # 仅示例简单配置，供游戏强制结束使用
+        # 默认配置
         self.config = {
             "admin": config.get("admin", []),             # 游戏管理员列表
             "maxWaitTime": config.get("maxWaitTime", 180) # 等待玩家2的最大时间
         }
 
-        # 记录不同群聊的游戏状态 { cid: {...}, ... }
+        # 记录不同群/会话的游戏状态
         self.games = {}
 
         # 定义可用道具
@@ -98,7 +96,7 @@ class BuckshotRoulette(Star):
         gid = event.get_group_id()
         if gid:
             return gid
-        return event.session_id  # 私聊时使用 session_id
+        return event.session_id  # 若是私聊，则用 session_id
 
     @command_group("恶魔轮盘")
     def demon_roulette(self):
@@ -123,7 +121,7 @@ class BuckshotRoulette(Star):
                 },
                 "status": "waiting",  # 等待阶段
             }
-            # 启动一个异步任务，等待玩家2
+            # 启动异步定时任务，等待玩家2
             asyncio.create_task(self.wait_for_join_timeout(cid, event))
 
             yield event.plain_result(textwrap.dedent(f"""\
@@ -137,18 +135,20 @@ class BuckshotRoulette(Star):
         else:
             status = self.games[cid].get("status", "")
             if status == "waiting":
-                yield event.plain_result("══恶魔轮盘══\n本群已有游戏正在等待玩家，发送“/恶魔轮盘 加入游戏”即可加入。")
+                yield event.plain_result("══恶魔轮盘══\n已有游戏在等待玩家，请使用“/恶魔轮盘 加入游戏”加入。")
             else:
-                yield event.plain_result("══恶魔轮盘══\n本群已有游戏正在进行中，无法重复创建。")
+                yield event.plain_result("══恶魔轮盘══\n当前已有游戏正在进行，无法重复创建。")
 
     async def wait_for_join_timeout(self, cid: str, event: AstrMessageEvent):
-        """等待玩家2的最大时间，超时自动取消游戏"""
+        """等待玩家2的最大时间后自动取消游戏"""
         await asyncio.sleep(self.config["maxWaitTime"])
         if cid in self.games and self.games[cid]["status"] == "waiting":
             del self.games[cid]
             await self.context.send_message(
                 event.unified_msg_origin,
-                MessageChain().message(f"{event.at_sender()} 等待玩家2超时，游戏已取消。")
+                MessageChain().message(
+                    f"{event.at_sender()} 等待玩家2超时，游戏已取消。"
+                )
             )
 
     @demon_roulette.command("加入游戏")
@@ -162,7 +162,7 @@ class BuckshotRoulette(Star):
             return
 
         if self.games[cid]["status"] != "waiting":
-            yield event.plain_result("══恶魔轮盘══\n游戏已满或正在进行中。")
+            yield event.plain_result("══恶魔轮盘══\n当前游戏已满或正在进行中。")
             return
 
         if self.games[cid]["player1"]["id"] == event.get_sender_id():
@@ -200,7 +200,7 @@ class BuckshotRoulette(Star):
             return
 
         if self.games[cid]["status"] != "full":
-            yield event.plain_result("══恶魔轮盘══\n本群游戏尚未凑满两人，无法开始。")
+            yield event.plain_result("══恶魔轮盘══\n游戏尚未凑满两人，无法开始。")
             return
 
         if self.games[cid]["player1"]["id"] != event.get_sender_id():
@@ -216,10 +216,11 @@ class BuckshotRoulette(Star):
         self.games[cid]["usedHandcuff"] = False
 
         # 发放道具
-        item_count_base = random.randint(3, 6)
         first_p = f"player{self.games[cid]['currentTurn']}"
         second_p = f"player{1 if self.games[cid]['currentTurn'] == 2 else 2}"
 
+        item_count_base = random.randint(3, 6)
+        # 先手少 1 个道具
         for _ in range(item_count_base - 1):
             self.games[cid][first_p]["item"].append(random.choice(list(self.item_list.keys())))
         for _ in range(item_count_base):
@@ -289,7 +290,7 @@ class BuckshotRoulette(Star):
             return
 
         del self.games[cid]
-        yield event.plain_result(f"══恶魔轮盘══\n{self.at_id(event.get_sender_id())} 已强制结束本群游戏。")
+        yield event.plain_result(f"══恶魔轮盘══\n{self.at_id(event.get_sender_id())} 已强制结束游戏。")
 
     # ----------------------------------------------------------------
     # 在消息层面拦截：如果玩家输入 “自己”/“对方” 或 道具名，执行相应操作
@@ -313,7 +314,7 @@ class BuckshotRoulette(Star):
                 yield msg_ret
             return
 
-        # 使用道具：如果玩家拥有该道具，触发对应逻辑
+        # 使用道具：如果玩家拥有该道具
         if content in g[cur_player]["item"]:
             async for msg_ret in self.use_item(cid, content, event):
                 yield msg_ret
@@ -328,13 +329,11 @@ class BuckshotRoulette(Star):
 
         bullet = game["bullet"].pop() if game["bullet"] else None
         if not bullet:
-            # 如果子弹已经打空，下一轮
             yield event.plain_result("══恶魔轮盘══\n当前弹夹已空，自动进入下一轮。")
             yield event.plain_result(self.next_round(game))
             return
 
         text = f"══恶魔轮盘══\n你将枪口对准了【{target}】，扣下扳机……是【{bullet}】\n"
-
         if bullet == "实弹":
             damage = 2 if game["double"] else 1
             if target == "自己":
@@ -342,7 +341,7 @@ class BuckshotRoulette(Star):
                 text += f"你损失了 {damage} 点血量。"
                 if game[cur_p]["hp"] <= 0:
                     yield event.plain_result(text)
-                    # 结束游戏
+                    # 游戏结束
                     lines = self.game_over(cid, winner=oth_p, loser=cur_p)
                     for ln in lines:
                         yield event.plain_result(ln)
@@ -352,17 +351,16 @@ class BuckshotRoulette(Star):
                 text += f"对方损失了 {damage} 点血量。"
                 if game[oth_p]["hp"] <= 0:
                     yield event.plain_result(text)
-                    # 结束游戏
+                    # 游戏结束
                     lines = self.game_over(cid, winner=cur_p, loser=oth_p)
                     for ln in lines:
                         yield event.plain_result(ln)
                     return
 
-        # 空包弹 或 完成射击后
         if bullet == "空包弹" and target == "自己":
             text += "\n接下来仍然是你的回合。"
         else:
-            # 是否手铐状态
+            # 是否被手铐
             if not game[oth_p]["handcuff"]:
                 game["currentTurn"] = 1 if game["currentTurn"] == 2 else 2
                 new_p = f"player{game['currentTurn']}"
@@ -370,18 +368,18 @@ class BuckshotRoulette(Star):
                 game["usedHandcuff"] = False
             else:
                 game[oth_p]["handcuff"] = False
-                text += f"\n对方被手铐束缚无法行动，依然由你继续。"
+                text += "\n对方被手铐束缚无法行动，依然由你继续。"
 
         yield event.plain_result(text)
         game["double"] = False
 
-        # 若子弹打空，进入下一轮
+        # 若子弹打空
         if len(game["bullet"]) == 0:
             yield event.plain_result(self.next_round(game))
 
     def next_round(self, game: dict):
         """
-        进入下一轮：重新随机生成弹夹，双方各获得若干道具。
+        进入下一轮：重新随机生成弹夹，并发放随机道具
         """
         game["round"] += 1
         game["bullet"] = generate_random_bullet_list()
@@ -396,7 +394,7 @@ class BuckshotRoulette(Star):
             game[cur_p]["item"].append(random.choice(item_pool))
             game[oth_p]["item"].append(random.choice(item_pool))
 
-        # 裁剪道具至上限 8
+        # 道具上限 8
         game["player1"]["item"] = game["player1"]["item"][:8]
         game["player2"]["item"] = game["player2"]["item"][:8]
 
@@ -416,45 +414,44 @@ class BuckshotRoulette(Star):
         game = self.games[cid]
         cur_p = f"player{game['currentTurn']}"
 
-        # 在道具生效前，给出统一的提示
-        yield f"你尝试使用【{item}】道具……"
+        # 1) 在道具生效前，给出尝试提示
+        yield event.plain_result(f"你尝试使用【{item}】道具……")
 
-        # 肾上腺素需要额外交互
+        # 2) 真正调用 item_list[item].use()
         if item == "肾上腺素":
             await event.plain_result("你使用了肾上腺素，请在 30 秒内输入一个想让对方立刻使用的道具名：")
             try:
                 pick_item = await self.context.prompt(event.unified_msg_origin, timeout=30)
             except asyncio.TimeoutError:
-                yield "操作超时，已取消使用肾上腺素。"
+                yield event.plain_result("操作超时，已取消使用肾上腺素。")
                 return
 
             if not pick_item:
-                yield "未输入道具名，操作取消。"
+                yield event.plain_result("未输入道具名，操作取消。")
                 return
             other_p = f"player{1 if game['currentTurn'] == 2 else 2}"
             if pick_item == "肾上腺素":
-                yield "不能选择对方的肾上腺素，操作取消。"
+                yield event.plain_result("不能选择对方的肾上腺素，操作取消。")
                 return
             if pick_item not in game[other_p]["item"]:
-                yield f"对方没有【{pick_item}】道具，操作取消。"
+                yield event.plain_result(f"对方没有【{pick_item}】道具，操作取消。")
                 return
-            # 执行肾上腺素效果
+
             lines = await self.item_list[item]["use"](self, cid, cur_p, pick_item, event)
             for ln in lines:
-                yield ln
+                yield event.plain_result(ln)
         else:
             lines = await self.item_list[item]["use"](self, cid, cur_p, None, event)
             for ln in lines:
-                yield ln
+                yield event.plain_result(ln)
 
-        # 使用完毕 -> 移除道具
+        # 3) 成功后移除道具 + 提示
         if item in game[cur_p]["item"]:
             game[cur_p]["item"].remove(item)
-            # 给出使用成功后的人性化提示
-            yield f"【{item}】已从你的背包里移除，希望这个操作能助你一臂之力！"
+            yield event.plain_result(f"【{item}】已从你的背包里移除，希望能助你一臂之力！")
 
     # ----------------------------------------------------------------
-    # 道具的实际实现：返回字符串列表
+    # 各种道具的具体实现
     # ----------------------------------------------------------------
 
     @staticmethod
@@ -472,7 +469,7 @@ class BuckshotRoulette(Star):
         """放大镜：查看当前膛内的子弹"""
         g = plugin.games[cid]
         if not g["bullet"]:
-            return ["你拿着放大镜对着空空如也的枪膛凝视，然而这里已经没有子弹了。"]
+            return ["你拿着放大镜对着空空如也的枪膛凝视，可惜里面没有子弹……"]
         bullet_type = g["bullet"][-1]
         return [
             "你取出放大镜，小心地凑近枪膛查看……",
@@ -484,13 +481,14 @@ class BuckshotRoulette(Star):
         """啤酒：卸下当前膛内的一发子弹"""
         g = plugin.games[cid]
         if not g["bullet"]:
-            return ["你想把子弹泡在啤酒里，但枪膛是空的，什么都拿不出来……"]
+            return ["你想把子弹泡在啤酒里，但枪膛是空的……什么都卸不下。"]
         bullet = g["bullet"].pop()
         msg = [
             "你拿起酒瓶猛灌了一口，然后将瓶口对准枪膛猛敲……",
-            f"结果，“叮”地一声，弹飞了一发【{bullet}】！"
+            f"结果“叮”地一声，弹飞了一发【{bullet}】！"
         ]
         if len(g["bullet"]) == 0:
+            # 若打空弹夹，则进入下一轮
             msg.append(plugin.next_round(g))
         return msg
 
@@ -502,12 +500,12 @@ class BuckshotRoulette(Star):
             g[cur_player]["hp"] += 1
             return [
                 "你点起一根香烟，深深地吸了一口……",
-                "这股尼古丁的味道仿佛给了你一丝安定，你恢复了 1 点血量。"
+                "烟雾萦绕中，你感觉紧张稍稍缓解，恢复了 1 点血量。"
             ]
         else:
             return [
-                "你点起香烟，却发现自己的状态已经巅峰，",
-                "抽完也只是过了个瘾，对血量并无实际帮助。"
+                "你点起香烟，却发现自己的状态已经满血，",
+                "抽完也只是稍微过了把瘾，对血量并无实际帮助。"
             ]
 
     @staticmethod
@@ -515,12 +513,12 @@ class BuckshotRoulette(Star):
         """手铐：跳过对方下回合"""
         g = plugin.games[cid]
         if g.get("usedHandcuff", False):
-            return ["你想再掏出手铐，却发现你本回合已经用过了。冷静点，别太上头！"]
+            return ["你想再掏出手铐，却发现本回合已经用过了，冷静点吧。"]
         other_p = f"player{1 if g['currentTurn'] == 2 else 2}"
         g[other_p]["handcuff"] = True
         g["usedHandcuff"] = True
         return [
-            "你神秘地掏出了一副手铐，瞬间拷住了对方的双手……",
+            "你神秘地掏出了一副手铐，瞬间拷住了对方双手……",
             "对方下一回合将被迫跳过！"
         ]
 
@@ -538,8 +536,8 @@ class BuckshotRoulette(Star):
             g[other_p]["item"].remove(pick_item)
 
         return [
-            "你一咬牙，将肾上腺素狠狠地注射进自己体内，强制对方使用某个道具……",
-            f"于是，对方只能立刻使用【{pick_item}】↓"
+            "你狠狠地将肾上腺素注射进体内，强制对方使用某个道具……",
+            f"对方只能立刻使用【{pick_item}】↓"
         ] + msgs_sub
 
     @staticmethod
@@ -550,18 +548,17 @@ class BuckshotRoulette(Star):
             recover = min(6 - g[cur_player]["hp"], 2)
             g[cur_player]["hp"] += recover
             return [
-                "你从包里摸出一瓶泛黄的药剂，心一横，直接服下……",
+                "你从包里摸出一瓶泛黄的药剂，心一横直接服下……",
                 f"竟然感觉身体一阵清爽，恢复了 {recover} 点血量！"
             ]
         else:
             g[cur_player]["hp"] -= 1
             if g[cur_player]["hp"] <= 0:
-                # 自己倒下
                 other_p = f"player{1 if g['currentTurn'] == 2 else 2}"
                 msg = textwrap.dedent(f"""\
                     你吞下那瓶过期药物后，立刻觉得胃里一阵剧痛……
                     眼前一黑，你再也支撑不住，笔直地倒了下去。
-                    
+
                     {plugin.at_id(g[other_p]['id'])} 获得了胜利！
                 """)
                 # 先发送倒下消息
@@ -574,7 +571,7 @@ class BuckshotRoulette(Star):
             else:
                 return [
                     "你看也不看就把这瓶过期药物吞了下去，",
-                    "突然觉得肚子一阵绞痛，损失了 1 点血量……不祥的预感涌上心头。"
+                    "突然感觉肚子一阵绞痛，损失 1 点血量……不祥的预感涌上心头。"
                 ]
 
     @staticmethod
@@ -594,7 +591,7 @@ class BuckshotRoulette(Star):
     @staticmethod
     async def use_once_phone(plugin, cid, cur_player, pick, event):
         """
-        一次性电话：根据当前枪内子弹总数，随机提示其中某一发的类型。不移除子弹。
+        一次性电话：随机告知枪内某发子弹的类型，不移除子弹
         """
         g = plugin.games[cid]
         bullet_count = len(g["bullet"])
@@ -611,11 +608,11 @@ class BuckshotRoulette(Star):
         ]
 
     # ----------------------------------------------------------------
-    # 游戏结束：改为返回字符串列表，而非生成器
+    # 结束游戏
     # ----------------------------------------------------------------
     def game_over(self, cid: str, winner: str, loser: str):
         """
-        结束游戏并宣告胜者。这里返回一个字符串列表，在外部 async 函数里再逐条发送。
+        宣告胜者并删除游戏数据
         """
         g = self.games[cid]
         w_id = g[winner]["id"]
@@ -633,11 +630,12 @@ class BuckshotRoulette(Star):
     # 辅助函数
     # ----------------------------------------------------------------
     def count_bullet(self, bullet_list, key):
+        """统计 bullet_list 中某种子弹出现次数"""
         return sum(1 for b in bullet_list if b == key)
 
     def at_id(self, user_id: str) -> str:
         """
-        简易示例，返回一个类似 @xxxx 的消息段。
-        实际可根据平台适配器，使用 event.at_sender() 等方法。
+        仅示例：返回适用于 QQ 协议的 CQ 码写法，以 f-string 方式嵌入。
+        如果在微信等不支持 @ 的平台，这里就只能当纯文本显示。
         """
-        return At(qq=user_id)
+        return f"[CQ:at,qq={user_id}]"
