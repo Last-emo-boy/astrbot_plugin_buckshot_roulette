@@ -1,5 +1,5 @@
 # main.py
-from astrbot.api.all import *
+from astrbot.api.all import *  # 直接导入所有API，包含 EventMessageType, event_message_type 等
 import asyncio
 import textwrap
 import random
@@ -294,7 +294,7 @@ class BuckshotRoulette(Star):
     # ----------------------------------------------------------------
     # 在消息层面拦截：如果玩家输入 “自己”/“对方” 或 道具名，执行相应操作
     # ----------------------------------------------------------------
-    @filter.on_message()
+    @event_message_type(EventMessageType.ALL)
     async def on_message(self, event: AstrMessageEvent):
         cid = self.get_channel_id(event)
         if cid not in self.games or self.games[cid]["status"] != "started":
@@ -416,6 +416,9 @@ class BuckshotRoulette(Star):
         game = self.games[cid]
         cur_p = f"player{game['currentTurn']}"
 
+        # 在道具生效前，给出统一的提示
+        yield f"你尝试使用【{item}】道具……"
+
         # 肾上腺素需要额外交互
         if item == "肾上腺素":
             await event.plain_result("你使用了肾上腺素，请在 30 秒内输入一个想让对方立刻使用的道具名：")
@@ -447,6 +450,8 @@ class BuckshotRoulette(Star):
         # 使用完毕 -> 移除道具
         if item in game[cur_p]["item"]:
             game[cur_p]["item"].remove(item)
+            # 给出使用成功后的人性化提示
+            yield f"【{item}】已从你的背包里移除，希望这个操作能助你一臂之力！"
 
     # ----------------------------------------------------------------
     # 道具的实际实现：返回字符串列表
@@ -457,24 +462,34 @@ class BuckshotRoulette(Star):
         """手锯：下一发造成双倍伤害，不可叠加"""
         g = plugin.games[cid]
         g["double"] = True
-        return ["手锯效果激活：下一发造成双倍伤害。"]
+        return [
+            "你小心翼翼地取出手锯，咔哒咔哒地锯短了枪管……",
+            "【手锯】效果：下一发造成双倍伤害！"
+        ]
 
     @staticmethod
     async def use_magnifier(plugin, cid, cur_player, pick, event):
         """放大镜：查看当前膛内的子弹"""
         g = plugin.games[cid]
         if not g["bullet"]:
-            return ["当前枪膛已空。"]
-        return [f"你使用了放大镜，看到了最后一发是【{g['bullet'][-1]}】"]
+            return ["你拿着放大镜对着空空如也的枪膛凝视，然而这里已经没有子弹了。"]
+        bullet_type = g["bullet"][-1]
+        return [
+            "你取出放大镜，小心地凑近枪膛查看……",
+            f"看起来，最后一发子弹是【{bullet_type}】。"
+        ]
 
     @staticmethod
     async def use_beer(plugin, cid, cur_player, pick, event):
         """啤酒：卸下当前膛内的一发子弹"""
         g = plugin.games[cid]
         if not g["bullet"]:
-            return ["枪膛已空，无子弹可卸。"]
+            return ["你想把子弹泡在啤酒里，但枪膛是空的，什么都拿不出来……"]
         bullet = g["bullet"].pop()
-        msg = [f"你喝下啤酒，将一发【{bullet}】抛出膛外。"]
+        msg = [
+            "你拿起酒瓶猛灌了一口，然后将瓶口对准枪膛猛敲……",
+            f"结果，“叮”地一声，弹飞了一发【{bullet}】！"
+        ]
         if len(g["bullet"]) == 0:
             msg.append(plugin.next_round(g))
         return msg
@@ -485,20 +500,29 @@ class BuckshotRoulette(Star):
         g = plugin.games[cid]
         if g[cur_player]["hp"] < 6:
             g[cur_player]["hp"] += 1
-            return ["你抽了一根香烟，恢复 1 点血量。"]
+            return [
+                "你点起一根香烟，深深地吸了一口……",
+                "这股尼古丁的味道仿佛给了你一丝安定，你恢复了 1 点血量。"
+            ]
         else:
-            return ["你已经满血，香烟没有额外效果。"]
+            return [
+                "你点起香烟，却发现自己的状态已经巅峰，",
+                "抽完也只是过了个瘾，对血量并无实际帮助。"
+            ]
 
     @staticmethod
     async def use_handcuff(plugin, cid, cur_player, pick, event):
         """手铐：跳过对方下回合"""
         g = plugin.games[cid]
         if g.get("usedHandcuff", False):
-            return ["本回合已使用过手铐，无法再次使用。"]
+            return ["你想再掏出手铐，却发现你本回合已经用过了。冷静点，别太上头！"]
         other_p = f"player{1 if g['currentTurn'] == 2 else 2}"
         g[other_p]["handcuff"] = True
         g["usedHandcuff"] = True
-        return ["你给对方戴上手铐，对方的下一回合将被跳过。"]
+        return [
+            "你神秘地掏出了一副手铐，瞬间拷住了对方的双手……",
+            "对方下一回合将被迫跳过！"
+        ]
 
     @staticmethod
     async def use_epinephrine(plugin, cid, cur_player, pick_item, event):
@@ -513,7 +537,10 @@ class BuckshotRoulette(Star):
         if pick_item in g[other_p]["item"]:
             g[other_p]["item"].remove(pick_item)
 
-        return [f"你给自己注射了肾上腺素，对方立即使用了【{pick_item}】↓"] + msgs_sub
+        return [
+            "你一咬牙，将肾上腺素狠狠地注射进自己体内，强制对方使用某个道具……",
+            f"于是，对方只能立刻使用【{pick_item}】↓"
+        ] + msgs_sub
 
     @staticmethod
     async def use_expired_medicine(plugin, cid, cur_player, pick, event):
@@ -522,14 +549,19 @@ class BuckshotRoulette(Star):
         if random.random() < 0.5:
             recover = min(6 - g[cur_player]["hp"], 2)
             g[cur_player]["hp"] += recover
-            return [f"你服下过期药物，意外恢复了 {recover} 点血量。"]
+            return [
+                "你从包里摸出一瓶泛黄的药剂，心一横，直接服下……",
+                f"竟然感觉身体一阵清爽，恢复了 {recover} 点血量！"
+            ]
         else:
             g[cur_player]["hp"] -= 1
             if g[cur_player]["hp"] <= 0:
                 # 自己倒下
                 other_p = f"player{1 if g['currentTurn'] == 2 else 2}"
                 msg = textwrap.dedent(f"""\
-                    你服下过期药物，感觉身体剧烈不适，直接倒下……
+                    你吞下那瓶过期药物后，立刻觉得胃里一阵剧痛……
+                    眼前一黑，你再也支撑不住，笔直地倒了下去。
+                    
                     {plugin.at_id(g[other_p]['id'])} 获得了胜利！
                 """)
                 # 先发送倒下消息
@@ -540,18 +572,24 @@ class BuckshotRoulette(Star):
                     await event.plain_result(ln)
                 return []
             else:
-                return ["你服下过期药物，感觉不妙，损失 1 点血量。"]
+                return [
+                    "你看也不看就把这瓶过期药物吞了下去，",
+                    "突然觉得肚子一阵绞痛，损失了 1 点血量……不祥的预感涌上心头。"
+                ]
 
     @staticmethod
     async def use_reverser(plugin, cid, cur_player, pick, event):
         """逆转器：将当前膛内最后一发子弹 实弹⇔空包弹"""
         g = plugin.games[cid]
         if not g["bullet"]:
-            return ["当前枪膛已空。"]
+            return ["你抚摸着逆转器，却发现枪膛里什么都没有可逆转……"]
         old_bullet = g["bullet"].pop()
         new_bullet = "空包弹" if old_bullet == "实弹" else "实弹"
         g["bullet"].append(new_bullet)
-        return [f"你使用逆转器，将【{old_bullet}】转换成【{new_bullet}】。"]
+        return [
+            "你拿起闪着奇异光泽的逆转器，对准枪膛轻轻一按……",
+            f"原本的【{old_bullet}】瞬间转换成【{new_bullet}】！"
+        ]
 
     @staticmethod
     async def use_once_phone(plugin, cid, cur_player, pick, event):
@@ -561,10 +599,16 @@ class BuckshotRoulette(Star):
         g = plugin.games[cid]
         bullet_count = len(g["bullet"])
         if bullet_count == 0:
-            return ["当前枪膛已空，电话也无法帮你。"]
+            return [
+                "你拿起那神秘电话，却发现枪膛里根本没子弹可询问……",
+                "对方只留下一声冷笑，然后挂断了电话。"
+            ]
         idx = random.randint(0, bullet_count - 1)
         bullet_type = g["bullet"][idx]
-        return [f"你使用了一次性电话，对方神秘地告诉你：第 {idx + 1} 发是【{bullet_type}】。"]
+        return [
+            "你轻轻拨通了一次性电话，一阵电流声后，似乎有人在对面低声说：",
+            f"“告诉你个秘密，第 {idx + 1} 发子弹是【{bullet_type}】……”"
+        ]
 
     # ----------------------------------------------------------------
     # 游戏结束：改为返回字符串列表，而非生成器
