@@ -640,4 +640,4 @@ class BuckshotRoulette(Star):
         简易示例，返回一个类似 @xxxx 的消息段。
         实际可根据平台适配器，使用 event.at_sender() 等方法。
         """
-        return f"[CQ:at,qq={user_id}]"
+        return At(qq=user_id)
