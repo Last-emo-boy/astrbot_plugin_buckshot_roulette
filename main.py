@@ -406,26 +406,21 @@ class BuckshotRoulette(Star):
             双方各获得 {item_count} 个随机道具（上限 8）。
         """)
         return msg
-
+            
     async def use_item(self, cid: str, item: str, event: AstrMessageEvent):
         """
         使用道具。如果是肾上腺素，需要先询问要使用的对方道具名。
         """
         game = self.games[cid]
         cur_p = f"player{game['currentTurn']}"
-
-        # 1) 在道具生效前，给出尝试提示
         yield event.plain_result(f"你尝试使用【{item}】道具……")
-
-        # 2) 真正调用 item_list[item].use()
         if item == "肾上腺素":
-            await event.plain_result("你使用了肾上腺素，请在 30 秒内输入一个想让对方立刻使用的道具名：")
+            yield event.plain_result("你使用了肾上腺素，请在 30 秒内输入一个想让对方立刻使用的道具名：")
             try:
                 pick_item = await self.context.prompt(event.unified_msg_origin, timeout=30)
             except asyncio.TimeoutError:
                 yield event.plain_result("操作超时，已取消使用肾上腺素。")
                 return
-
             if not pick_item:
                 yield event.plain_result("未输入道具名，操作取消。")
                 return
@@ -436,7 +431,6 @@ class BuckshotRoulette(Star):
             if pick_item not in game[other_p]["item"]:
                 yield event.plain_result(f"对方没有【{pick_item}】道具，操作取消。")
                 return
-
             lines = await self.item_list[item]["use"](self, cid, cur_p, pick_item, event)
             for ln in lines:
                 yield event.plain_result(ln)
@@ -444,8 +438,6 @@ class BuckshotRoulette(Star):
             lines = await self.item_list[item]["use"](self, cid, cur_p, None, event)
             for ln in lines:
                 yield event.plain_result(ln)
-
-        # 3) 成功后移除道具 + 提示
         if item in game[cur_p]["item"]:
             game[cur_p]["item"].remove(item)
             yield event.plain_result(f"【{item}】已从你的背包里移除，希望能助你一臂之力！")
