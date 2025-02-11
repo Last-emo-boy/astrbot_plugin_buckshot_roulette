@@ -15,6 +15,6 @@ help: |
     2. 玩家2使用「/恶魔轮盘 加入游戏」后，玩家1再使用「/恶魔轮盘 开始游戏」进入对战；
     3. 输入「自己」或「对方」来开枪，输入道具名来使用道具，直到一方倒下或主动结束。
 
-version: v1.0.0 # 插件版本号。格式：v1.1.1 或者 v1.1
+version: v1.1.0 # 插件版本号。格式：v1.1.1 或者 v1.1
 author: w33d # 作者
 repo: https://github.com/Last-emo-boy/astrbot_plugin_buckshot_roulette # 插件的仓库地址

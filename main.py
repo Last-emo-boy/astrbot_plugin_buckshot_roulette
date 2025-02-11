@@ -20,9 +20,9 @@ def generate_random_bullet_list():
 
 @register(
     "astrbot_plugin_buckshot_roulette",  # 插件唯一识别名
-    "Your Name",                         # 作者
+    "w33d",                         # 作者
     "恶魔轮盘 - Buckshot Roulette",       # 简短描述
-    "1.0.0"                              # 版本号
+    "1.1.0"                              # 版本号
 )
 class BuckshotRoulette(Star):
     """
