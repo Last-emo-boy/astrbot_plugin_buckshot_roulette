@@ -1,15 +1,15 @@
 # main.py
-from astrbot.api.all import *  # 直接导入所有API，包含 EventMessageType, event_message_type 等
+from astrbot.api.all import *  # 导入所有API
 import asyncio
 import textwrap
 import random
 
 def generate_random_bullet_list():
     """
-    随机生成一个弹夹列表:
-    - 子弹数量在 3 ~ 8 之间
-    - 每发子弹为 "实弹" 或 "空包弹" (各 50% 概率)
-    - 最后再洗牌
+    随机生成一个弹夹列表：
+      - 子弹数量在 3 ~ 8 之间
+      - 每发子弹为 "实弹" 或 "空包弹"（各 50% 概率）
+      - 最后再洗牌
     """
     bullet_count = random.randint(3, 8)
     bullets = []
@@ -19,36 +19,33 @@ def generate_random_bullet_list():
     return bullets
 
 @register(
-    "astrbot_plugin_buckshot_roulette",  # 插件名 (必须唯一)
-    "Your Name",                         # 作者
-    "恶魔轮盘 - Buckshot Roulette",       # 简要描述
-    "1.0.0"                              # 版本
+    "astrbot_plugin_buckshot_roulette",  # 插件的唯一识别名
+    "Your Name",                         # 插件作者
+    "恶魔轮盘 - Buckshot Roulette",       # 插件简短描述
+    "1.0.0"                              # 插件版本
 )
 class BuckshotRoulette(Star):
     """
     AstrBot 恶魔轮盘游戏插件。
-    在群聊里支持 2 人对战，使用种种道具与子弹组合决胜负。
+    支持在群聊中进行 2 人对战，通过随机子弹和多种道具决胜负，
+    同时提供了商店兑换功能以及管理员调试命令，给你带来丰富有趣的体验。
     """
 
     def __init__(self, context: Context, config: dict = None):
         """
-        :param context: AstrBot 传入的 Context
-        :param config: (可选) 从 _conf_schema.json 读取的用户配置
+        :param context: AstrBot 传入的 Context 对象
+        :param config: (可选) 从 _conf_schema.json 中读取的用户配置
         """
         super().__init__(context)
-
         if not config:
             config = {}
-        # 默认配置
         self.config = {
-            "admin": config.get("admin", []),             # 游戏管理员列表
-            "maxWaitTime": config.get("maxWaitTime", 180) # 等待玩家2的最大时间
+            "admin": config.get("admin", []),             # 管理员ID列表
+            "maxWaitTime": config.get("maxWaitTime", 180)   # 等待玩家2加入的最大时间（秒）
         }
-
-        # 记录不同群/会话的游戏状态
         self.games = {}
 
-        # 定义可用道具
+        # 定义可用道具（注意：已移除肾上腺素，并新增“炸弹”、“幸运星”、“护盾”）
         self.item_list = {
             "手锯": {
                 "description": "下一发造成双倍伤害，不可叠加",
@@ -67,37 +64,46 @@ class BuckshotRoulette(Star):
                 "use": self.use_cigarette,
             },
             "手铐": {
-                "description": "跳过对方下一回合",
+                "description": "让对方跳过下一回合",
                 "use": self.use_handcuff,
             },
-            "肾上腺素": {
-                "description": "立刻指定对方的道具并使用（不可选择肾上腺素）",
-                "use": self.use_epinephrine,
-            },
             "过期药物": {
-                "description": "50%概率+2血，50%概率-1血",
+                "description": "50%几率恢复2点血；50%几率损失1点血",
                 "use": self.use_expired_medicine,
             },
             "逆转器": {
-                "description": "实弹 ⇔ 空包弹",
+                "description": "将最后一发子弹类型反转",
                 "use": self.use_reverser,
             },
             "一次性电话": {
-                "description": "随机告知其中一发子弹是实弹还是空包弹（不移除）",
+                "description": "随机告知枪膛中某发子弹的类型（不移除）",
                 "use": self.use_once_phone,
-            }
+            },
+            "炸弹": {
+                "description": "投掷后对对手造成2点伤害（若对方有护盾，则抵消伤害）",
+                "use": self.use_zhandan,
+            },
+            "幸运星": {
+                "description": "使用后随机获得血量恢复或额外道具",
+                "use": self.use_xingyunxing,
+            },
+            "护盾": {
+                "description": "获得护盾，下一次攻击伤害将被抵消",
+                "use": self.use_hudun,
+            },
         }
 
     def get_channel_id(self, event: AstrMessageEvent) -> str:
         """
-        获取唯一群聊ID（或session_id）。
-        优先使用群ID，没有则使用 session_id 作为私聊标识。
+        获取唯一群聊ID（或 session_id）。
+        优先返回群ID；若为私聊，则返回 session_id。
         """
         gid = event.get_group_id()
         if gid:
             return gid
-        return event.session_id  # 若是私聊，则用 session_id
+        return event.session_id
 
+    # ----------------- 基本命令 -----------------
     @command_group("恶魔轮盘")
     def demon_roulette(self):
         """恶魔轮盘游戏主指令组"""
@@ -106,8 +112,8 @@ class BuckshotRoulette(Star):
     @demon_roulette.command("创建游戏")
     async def create_game(self, event: AstrMessageEvent):
         """
-        创建游戏：仅当本群尚无游戏时可创建。
-        创建后等待玩家2加入，否则超时自动取消。
+        创建游戏：当本群中没有正在进行的游戏时可创建，
+        创建后等待另一名玩家加入，超时自动取消。
         """
         cid = self.get_channel_id(event)
         if cid not in self.games:
@@ -117,97 +123,87 @@ class BuckshotRoulette(Star):
                     "id": event.get_sender_id(),
                     "hp": 6,
                     "item": [],
-                    "handcuff": False
+                    "handcuff": False,
+                    "shield": False
                 },
-                "status": "waiting",  # 等待阶段
+                "status": "waiting",
             }
-            # 启动异步定时任务，等待玩家2
             asyncio.create_task(self.wait_for_join_timeout(cid, event))
-
             yield event.plain_result(textwrap.dedent(f"""\
             ══恶魔轮盘══
             游戏创建成功！
-            玩家1：{event.get_sender_name()}({event.get_sender_id()})
-            玩家2：等待中……
-
-            发送“/恶魔轮盘 加入游戏”加入本游戏。等待超时自动取消。
+            玩家1：{event.get_sender_name()} ({event.get_sender_id()})
+            玩家2：正在等待中……
+            
+            请发送“/恶魔轮盘 加入游戏”加入本游戏，超时后将自动取消！
             """))
         else:
             status = self.games[cid].get("status", "")
             if status == "waiting":
-                yield event.plain_result("══恶魔轮盘══\n已有游戏在等待玩家，请使用“/恶魔轮盘 加入游戏”加入。")
+                yield event.plain_result("══恶魔轮盘══\n本群已有游戏在等待玩家，请发送“/恶魔轮盘 加入游戏”加入。")
             else:
-                yield event.plain_result("══恶魔轮盘══\n当前已有游戏正在进行，无法重复创建。")
+                yield event.plain_result("══恶魔轮盘══\n当前群中已有游戏正在进行，无法重复创建。")
 
     async def wait_for_join_timeout(self, cid: str, event: AstrMessageEvent):
-        """等待玩家2的最大时间后自动取消游戏"""
+        """等待玩家2加入，超时后自动取消游戏"""
         await asyncio.sleep(self.config["maxWaitTime"])
         if cid in self.games and self.games[cid]["status"] == "waiting":
             del self.games[cid]
             await self.context.send_message(
                 event.unified_msg_origin,
-                MessageChain().message(
-                    f"{event.at_sender()} 等待玩家2超时，游戏已取消。"
-                )
+                MessageChain().message(f"{event.at_sender()}，等待玩家2超时，游戏已取消。")
             )
 
     @demon_roulette.command("加入游戏")
     async def join_game(self, event: AstrMessageEvent):
         """
-        加入游戏：只能在游戏等待状态下加入，不能自己加入自己创建的游戏。
+        加入游戏：仅当游戏处于等待状态时才能加入，
+        且你不能加入自己创建的游戏。
         """
         cid = self.get_channel_id(event)
         if cid not in self.games:
             yield event.plain_result("══恶魔轮盘══\n当前没有可加入的游戏，请先创建。")
             return
-
         if self.games[cid]["status"] != "waiting":
-            yield event.plain_result("══恶魔轮盘══\n当前游戏已满或正在进行中。")
+            yield event.plain_result("══恶魔轮盘══\n游戏已满或正在进行中。")
             return
-
         if self.games[cid]["player1"]["id"] == event.get_sender_id():
             yield event.plain_result("══恶魔轮盘══\n你不能加入自己创建的游戏。")
             return
-
-        # 成为 player2
         self.games[cid]["player2"] = {
             "name": event.get_sender_name(),
             "id": event.get_sender_id(),
             "hp": 6,
             "item": [],
-            "handcuff": False
+            "handcuff": False,
+            "shield": False
         }
         self.games[cid]["status"] = "full"
-
         yield event.plain_result(textwrap.dedent(f"""\
             ══恶魔轮盘══
             成功加入游戏！
-            玩家1：{self.games[cid]['player1']['name']}({self.games[cid]['player1']['id']})
-            玩家2：{event.get_sender_name()}({event.get_sender_id()})
-
-            由玩家1发送“/恶魔轮盘 开始游戏”正式开始游戏。
-        """))
+            玩家1：{self.games[cid]['player1']['name']} ({self.games[cid]['player1']['id']})
+            玩家2：{event.get_sender_name()} ({event.get_sender_id()})
+            
+            请由玩家1发送“/恶魔轮盘 开始游戏”以正式开始对战！
+            """))
 
     @demon_roulette.command("开始游戏")
     async def start_game(self, event: AstrMessageEvent):
         """
-        开始游戏：只有玩家1可开始。
-        随机生成弹夹，随机先/后手，发放道具。
+        开始游戏：仅允许游戏创建者（玩家1）操作，
+        系统会随机生成弹夹、随机决定先后手，并为双方发放随机道具。
         """
         cid = self.get_channel_id(event)
         if cid not in self.games:
-            yield event.plain_result("══恶魔轮盘══\n没有可开始的游戏，请先创建/加入。")
+            yield event.plain_result("══恶魔轮盘══\n没有可开始的游戏，请先创建或加入。")
             return
-
         if self.games[cid]["status"] != "full":
             yield event.plain_result("══恶魔轮盘══\n游戏尚未凑满两人，无法开始。")
             return
-
         if self.games[cid]["player1"]["id"] != event.get_sender_id():
-            yield event.plain_result("══恶魔轮盘══\n只有玩家1才能开始游戏。")
+            yield event.plain_result("══恶魔轮盘══\n只有游戏创建者（玩家1）才能开始游戏。")
             return
-
-        # 进入游戏
         self.games[cid]["status"] = "started"
         self.games[cid]["bullet"] = generate_random_bullet_list()
         self.games[cid]["currentTurn"] = random.randint(1, 2)
@@ -215,245 +211,289 @@ class BuckshotRoulette(Star):
         self.games[cid]["round"] = 0
         self.games[cid]["usedHandcuff"] = False
 
-        # 发放道具
         first_p = f"player{self.games[cid]['currentTurn']}"
         second_p = f"player{1 if self.games[cid]['currentTurn'] == 2 else 2}"
-
         item_count_base = random.randint(3, 6)
-        # 先手少 1 个道具
         for _ in range(item_count_base - 1):
             self.games[cid][first_p]["item"].append(random.choice(list(self.item_list.keys())))
         for _ in range(item_count_base):
             self.games[cid][second_p]["item"].append(random.choice(list(self.item_list.keys())))
-
         bullet_list = self.games[cid]["bullet"]
         yield event.plain_result(textwrap.dedent(f"""\
             ══恶魔轮盘══
             游戏开始！
-
-            玩家1：{self.games[cid]["player1"]["name"]}({self.games[cid]["player1"]["id"]})
-            玩家2：{self.games[cid]["player2"]["name"]}({self.games[cid]["player2"]["id"]})
-
-            由 {self.at_id(self.games[cid][first_p]["id"])} 先手。
+            玩家1：{self.games[cid]["player1"]["name"]} ({self.games[cid]["player1"]["id"]})
+            玩家2：{self.games[cid]["player2"]["name"]} ({self.games[cid]["player2"]["id"]})
+            由 {self.at_id(self.games[cid][first_p]["id"])} 先手！
             先手获得 {item_count_base - 1} 个道具，后手获得 {item_count_base} 个道具。
-
-            当前弹夹共 {len(bullet_list)} 发子弹，其中：
-            实弹 {self.count_bullet(bullet_list, "实弹")} 发，空包弹 {self.count_bullet(bullet_list, "空包弹")} 发。
-
-            发送 “/恶魔轮盘 对战信息” 查看当前对战状况。
+            当前弹夹中共有 {len(bullet_list)} 发子弹，
+            其中实弹 {self.count_bullet(bullet_list, "实弹")} 发，空包弹 {self.count_bullet(bullet_list, "空包弹")} 发。
+            请发送“/恶魔轮盘 对战信息”查看详细情况，祝你好运！
         """))
 
     @demon_roulette.command("对战信息")
     async def show_game_info(self, event: AstrMessageEvent):
-        """查看当前对战信息（血量、道具等）"""
+        """
+        查看当前对战信息：显示双方血量和持有道具。
+        """
         cid = self.get_channel_id(event)
         if cid not in self.games or self.games[cid]["status"] != "started":
-            yield event.plain_result("══恶魔轮盘══\n本群无正在进行的恶魔轮盘游戏。")
+            yield event.plain_result("══恶魔轮盘══\n当前没有正在进行的游戏。")
             return
-
         g = self.games[cid]
         p1 = g["player1"]
         p2 = g["player2"]
-
         msg = textwrap.dedent(f"""\
             ══恶魔轮盘══
-            --血量--
-            玩家1({p1["name"]})：{p1["hp"]}/6
-            玩家2({p2["name"]})：{p2["hp"]}/6
+            -- 血量状况 --
+            玩家1 ({p1["name"]})：{p1["hp"]}/6
+            玩家2 ({p2["name"]})：{p2["hp"]}/6
 
-            --玩家1的道具 ({len(p1["item"])}/8)--
+            -- 玩家1的道具 ({len(p1["item"])}/8) --
         """)
-        msg += "\n".join(f"{it}({self.item_list[it]['description']})" for it in p1["item"])
+        msg += "\n".join(f"{it} ({self.item_list[it]['description']})" for it in p1["item"])
         msg += textwrap.dedent(f"""\n
-            --玩家2的道具 ({len(p2["item"])}/8)--
+            -- 玩家2的道具 ({len(p2["item"])}/8) --
         """)
-        msg += "\n".join(f"{it}({self.item_list[it]['description']})" for it in p2["item"])
+        msg += "\n".join(f"{it} ({self.item_list[it]['description']})" for it in p2["item"])
         msg += textwrap.dedent(f"""\n
-            发送道具名可使用道具；发送“自己”或“对方”可选择向谁开枪。
+            发送道具名以使用对应道具，
+            或发送“自己” / “对方” 来开枪！
         """)
         yield event.plain_result(msg)
 
-    @demon_roulette.command("结束游戏")
-    async def end_game(self, event: AstrMessageEvent):
+    @demon_roulette.command("兑换")
+    async def exchange_item(self, event: AstrMessageEvent, source: str, target: str):
         """
-        主动结束游戏，可由玩家1/玩家2或管理员执行
+        兑换道具：如果你拥有 2 个相同的【source】道具，则可兑换为 1 个【target】道具。
+        兑换规则仅限以下允许范围：
+          香烟：可兑换为 手锯、放大镜、炸弹、幸运星、护盾
+          啤酒：可兑换为 手铐、护盾
+          手锯：可兑换为 逆转器
+          放大镜：可兑换为 一次性电话
         """
-        cid = self.get_channel_id(event)
-        if cid not in self.games:
-            yield event.plain_result("══恶魔轮盘══\n无可结束的游戏。")
-            return
-
-        p1_id = self.games[cid]["player1"]["id"]
-        p2_id = self.games[cid].get("player2", {}).get("id", "")
-        if event.get_sender_id() not in [p1_id, p2_id, *self.config["admin"]]:
-            yield event.plain_result("══恶魔轮盘══\n只有游戏参与者或管理员可结束游戏。")
-            return
-
-        del self.games[cid]
-        yield event.plain_result(f"══恶魔轮盘══\n{self.at_id(event.get_sender_id())} 已强制结束游戏。")
-
-    # ----------------------------------------------------------------
-    # 在消息层面拦截：如果玩家输入 “自己”/“对方” 或 道具名，执行相应操作
-    # ----------------------------------------------------------------
-    @event_message_type(EventMessageType.ALL)
-    async def on_message(self, event: AstrMessageEvent):
+        allowed_exchanges = {
+            "香烟": ["手锯", "放大镜", "炸弹", "幸运星", "护盾"],
+            "啤酒": ["手铐", "护盾"],
+            "手锯": ["逆转器"],
+            "放大镜": ["一次性电话"],
+        }
         cid = self.get_channel_id(event)
         if cid not in self.games or self.games[cid]["status"] != "started":
-            return  # 无游戏或游戏未开始 -> 不处理
+            yield event.plain_result("当前没有正在进行的游戏。")
+            return
+        if source not in allowed_exchanges or target not in allowed_exchanges[source]:
+            yield event.plain_result(f"【{source}】无法兑换成【{target}】。")
+            return
+        game = self.games[cid]
+        cur_player = f"player{game['currentTurn']}"
+        if game[cur_player]["item"].count(source) < 2:
+            yield event.plain_result(f"你没有足够的【{source}】进行兑换（需要2个）。")
+            return
+        for _ in range(2):
+            game[cur_player]["item"].remove(source)
+        game[cur_player]["item"].append(target)
+        yield event.plain_result(f"兑换成功：2个【{source}】已兑换为1个【{target}】！")
 
+    # ----------------- Debug 命令，仅管理员可用 -----------------
+    @demon_roulette.group("debug")
+    def debug(self):
+        """Debug 模式：仅限管理员使用，可用于给玩家道具、修改血量、查询状态等调试操作"""
+        pass
+
+    @debug.command("给道具")
+    async def debug_give_item(self, event: AstrMessageEvent, target: str, item: str, quantity: int):
+        if event.get_sender_id() not in self.config["admin"]:
+            yield event.plain_result("权限不足！")
+            return
+        cid = self.get_channel_id(event)
+        if cid not in self.games:
+            yield event.plain_result("当前群中没有游戏。")
+            return
+        game = self.games[cid]
+        player = None
+        if game["player1"]["id"] == target:
+            player = game["player1"]
+        elif "player2" in game and game["player2"]["id"] == target:
+            player = game["player2"]
+        if not player:
+            yield event.plain_result("指定的玩家不在当前游戏中。")
+            return
+        for _ in range(quantity):
+            player["item"].append(item)
+        yield event.plain_result(f"已给玩家 {player['name']} 添加了 {quantity} 个 {item} 道具。")
+
+    @debug.command("修改血量")
+    async def debug_set_hp(self, event: AstrMessageEvent, target: str, hp: int):
+        if event.get_sender_id() not in self.config["admin"]:
+            yield event.plain_result("权限不足！")
+            return
+        cid = self.get_channel_id(event)
+        if cid not in self.games:
+            yield event.plain_result("当前群中没有游戏。")
+            return
+        game = self.games[cid]
+        player = None
+        if game["player1"]["id"] == target:
+            player = game["player1"]
+        elif "player2" in game and game["player2"]["id"] == target:
+            player = game["player2"]
+        if not player:
+            yield event.plain_result("指定的玩家不在当前游戏中。")
+            return
+        player["hp"] = hp
+        yield event.plain_result(f"已将玩家 {player['name']} 的血量设置为 {hp}。")
+
+    @debug.command("查询子弹")
+    async def debug_query_bullet(self, event: AstrMessageEvent):
+        if event.get_sender_id() not in self.config["admin"]:
+            yield event.plain_result("权限不足！")
+            return
+        cid = self.get_channel_id(event)
+        if cid not in self.games:
+            yield event.plain_result("当前群中没有游戏。")
+            return
+        bullet_list = self.games[cid].get("bullet", [])
+        yield event.plain_result(f"当前弹夹：{bullet_list}")
+
+    @debug.command("查询游戏")
+    async def debug_query_game(self, event: AstrMessageEvent):
+        if event.get_sender_id() not in self.config["admin"]:
+            yield event.plain_result("权限不足！")
+            return
+        cid = self.get_channel_id(event)
+        if cid not in self.games:
+            yield event.plain_result("当前群中没有游戏。")
+            return
+        yield event.plain_result(f"当前游戏数据：{self.games[cid]}")
+
+    # ----------------- 消息监听 -----------------
+    @event_message_type(EventMessageType.ALL)
+    async def on_message(self, event: AstrMessageEvent):
+        """
+        监听消息：如果游戏正在进行且处于当前玩家回合，
+        则判断玩家是否选择了“自己”或“对方”开枪，或使用道具。
+        """
+        cid = self.get_channel_id(event)
+        if cid not in self.games or self.games[cid]["status"] != "started":
+            return
         g = self.games[cid]
         cur_player = f"player{g['currentTurn']}"
         if g[cur_player]["id"] != event.get_sender_id():
-            return  # 不是当前玩家回合 -> 不处理
-
+            return
         content = event.message_obj.message_str.strip()
-
-        # 开枪：输入 “自己”/“对方”
         if content in ["自己", "对方"]:
             async for msg_ret in self.fire(cid, content, event):
                 yield msg_ret
             return
-
-        # 使用道具：如果玩家拥有该道具
         if content in g[cur_player]["item"]:
             async for msg_ret in self.use_item(cid, content, event):
                 yield msg_ret
 
-    # ----------------------------------------------------------------
-    # 核心函数：开枪 & 使用道具
-    # ----------------------------------------------------------------
     async def fire(self, cid: str, target: str, event: AstrMessageEvent):
+        """
+        开枪逻辑：根据当前枪内子弹类型计算伤害、切换回合或结束游戏，
+        并反馈详细描述。
+        """
         game = self.games[cid]
         cur_p = f"player{game['currentTurn']}"
         oth_p = f"player{1 if game['currentTurn'] == 2 else 2}"
-
         bullet = game["bullet"].pop() if game["bullet"] else None
         if not bullet:
             yield event.plain_result("══恶魔轮盘══\n当前弹夹已空，自动进入下一轮。")
             yield event.plain_result(self.next_round(game))
             return
-
-        text = f"══恶魔轮盘══\n你将枪口对准了【{target}】，扣下扳机……是【{bullet}】\n"
+        text = f"══恶魔轮盘══\n你将枪口对准了【{target}】，扣下扳机……结果是【{bullet}】\n"
         if bullet == "实弹":
             damage = 2 if game["double"] else 1
             if target == "自己":
                 game[cur_p]["hp"] -= damage
-                text += f"你损失了 {damage} 点血量。"
+                text += f"你遭受强烈反噬，损失了 {damage} 点血量！"
                 if game[cur_p]["hp"] <= 0:
                     yield event.plain_result(text)
-                    # 游戏结束
                     lines = self.game_over(cid, winner=oth_p, loser=cur_p)
                     for ln in lines:
                         yield event.plain_result(ln)
                     return
             else:
-                game[oth_p]["hp"] -= damage
-                text += f"对方损失了 {damage} 点血量。"
-                if game[oth_p]["hp"] <= 0:
-                    yield event.plain_result(text)
-                    # 游戏结束
-                    lines = self.game_over(cid, winner=cur_p, loser=oth_p)
-                    for ln in lines:
-                        yield event.plain_result(ln)
-                    return
-
+                # 如果对方有护盾，则抵消伤害
+                if game[oth_p].get("shield", False):
+                    text += "但对方的护盾闪耀，将伤害全部吸收！"
+                    game[oth_p]["shield"] = False
+                else:
+                    game[oth_p]["hp"] -= damage
+                    text += f"对方受到重创，损失了 {damage} 点血量！"
+                    if game[oth_p]["hp"] <= 0:
+                        yield event.plain_result(text)
+                        lines = self.game_over(cid, winner=cur_p, loser=oth_p)
+                        for ln in lines:
+                            yield event.plain_result(ln)
+                        return
         if bullet == "空包弹" and target == "自己":
-            text += "\n接下来仍然是你的回合。"
+            text += "\n幸好这只是空包弹，你依然保有行动权！"
         else:
-            # 是否被手铐
             if not game[oth_p]["handcuff"]:
                 game["currentTurn"] = 1 if game["currentTurn"] == 2 else 2
                 new_p = f"player{game['currentTurn']}"
-                text += f"\n切换回合：由 {self.at_id(game[new_p]['id'])} 开始行动。"
+                text += f"\n切换回合：现在由 {self.at_id(game[new_p]['id'])} 决定下一步！"
                 game["usedHandcuff"] = False
             else:
                 game[oth_p]["handcuff"] = False
-                text += "\n对方被手铐束缚无法行动，依然由你继续。"
-
+                text += "\n对方被手铐束缚，无法反击，你继续掌控全局！"
         yield event.plain_result(text)
         game["double"] = False
-
-        # 若子弹打空
         if len(game["bullet"]) == 0:
             yield event.plain_result(self.next_round(game))
 
     def next_round(self, game: dict):
         """
-        进入下一轮：重新随机生成弹夹，并发放随机道具
+        进入下一轮：重新生成弹夹，并为双方发放新的随机道具。
         """
         game["round"] += 1
         game["bullet"] = generate_random_bullet_list()
         bullet_list = game["bullet"]
-
         item_pool = list(self.item_list.keys())
         item_count = random.randint(2, 5)
         cur_p = f"player{game['currentTurn']}"
         oth_p = f"player{1 if game['currentTurn'] == 2 else 2}"
-
         for _ in range(item_count):
             game[cur_p]["item"].append(random.choice(item_pool))
             game[oth_p]["item"].append(random.choice(item_pool))
-
-        # 道具上限 8
         game["player1"]["item"] = game["player1"]["item"][:8]
         game["player2"]["item"] = game["player2"]["item"][:8]
-
         msg = textwrap.dedent(f"""\
             ══恶魔轮盘══
             弹夹打空，进入第 {game["round"]} 轮！
-            新弹夹共 {len(bullet_list)} 发子弹，
+            新弹夹中共有 {len(bullet_list)} 发子弹，
             其中实弹 {self.count_bullet(bullet_list, "实弹")} 发，空包弹 {self.count_bullet(bullet_list, "空包弹")} 发。
             双方各获得 {item_count} 个随机道具（上限 8）。
         """)
         return msg
-            
+
     async def use_item(self, cid: str, item: str, event: AstrMessageEvent):
         """
-        使用道具。如果是肾上腺素，需要先询问要使用的对方道具名。
+        使用道具：调用对应道具效果，并反馈操作结果，
+        使用成功后从玩家背包中移除该道具。
         """
         game = self.games[cid]
         cur_p = f"player{game['currentTurn']}"
         yield event.plain_result(f"你尝试使用【{item}】道具……")
-        if item == "肾上腺素":
-            yield event.plain_result("你使用了肾上腺素，请在 30 秒内输入一个想让对方立刻使用的道具名：")
-            try:
-                pick_item = await self.context.prompt(event.unified_msg_origin, timeout=30)
-            except asyncio.TimeoutError:
-                yield event.plain_result("操作超时，已取消使用肾上腺素。")
-                return
-            if not pick_item:
-                yield event.plain_result("未输入道具名，操作取消。")
-                return
-            other_p = f"player{1 if game['currentTurn'] == 2 else 2}"
-            if pick_item == "肾上腺素":
-                yield event.plain_result("不能选择对方的肾上腺素，操作取消。")
-                return
-            if pick_item not in game[other_p]["item"]:
-                yield event.plain_result(f"对方没有【{pick_item}】道具，操作取消。")
-                return
-            lines = await self.item_list[item]["use"](self, cid, cur_p, pick_item, event)
-            for ln in lines:
-                yield event.plain_result(ln)
-        else:
-            lines = await self.item_list[item]["use"](self, cid, cur_p, None, event)
-            for ln in lines:
-                yield event.plain_result(ln)
+        lines = await self.item_list[item]["use"](self, cid, cur_p, None, event)
+        for ln in lines:
+            yield event.plain_result(ln)
         if item in game[cur_p]["item"]:
             game[cur_p]["item"].remove(item)
-            yield event.plain_result(f"【{item}】已从你的背包里移除，希望能助你一臂之力！")
+            yield event.plain_result(f"【{item}】已从你的背包中移除，希望这能助你一臂之力！")
 
-    # ----------------------------------------------------------------
-    # 各种道具的具体实现
-    # ----------------------------------------------------------------
-
+    # ----------------- 各道具的具体实现 -----------------
     @staticmethod
     async def use_saw(plugin, cid, cur_player, pick, event):
         """手锯：下一发造成双倍伤害，不可叠加"""
         g = plugin.games[cid]
         g["double"] = True
         return [
-            "你小心翼翼地取出手锯，咔哒咔哒地锯短了枪管……",
-            "【手锯】效果：下一发造成双倍伤害！"
+            "你小心翼翼地取出手锯，锯短了枪管……",
+            "【手锯】效果启动：下一发子弹伤害翻倍！"
         ]
 
     @staticmethod
@@ -461,11 +501,11 @@ class BuckshotRoulette(Star):
         """放大镜：查看当前膛内的子弹"""
         g = plugin.games[cid]
         if not g["bullet"]:
-            return ["你拿着放大镜对着空空如也的枪膛凝视，可惜里面没有子弹……"]
+            return ["你拿着放大镜仔细查看，结果发现枪膛中已无子弹。"]
         bullet_type = g["bullet"][-1]
         return [
-            "你取出放大镜，小心地凑近枪膛查看……",
-            f"看起来，最后一发子弹是【{bullet_type}】。"
+            "你取出放大镜，凑近枪膛仔细观察……",
+            f"发现下一发子弹是【{bullet_type}】！"
         ]
 
     @staticmethod
@@ -473,14 +513,13 @@ class BuckshotRoulette(Star):
         """啤酒：卸下当前膛内的一发子弹"""
         g = plugin.games[cid]
         if not g["bullet"]:
-            return ["你想把子弹泡在啤酒里，但枪膛是空的……什么都卸不下。"]
+            return ["你试图用啤酒卸下子弹，但枪膛已经空了……"]
         bullet = g["bullet"].pop()
         msg = [
-            "你拿起酒瓶猛灌了一口，然后将瓶口对准枪膛猛敲……",
-            f"结果“叮”地一声，弹飞了一发【{bullet}】！"
+            "你大口喝下冰镇啤酒，猛然敲击枪膛……",
+            f"“叮”地一声，一发【{bullet}】弹飞而出！"
         ]
         if len(g["bullet"]) == 0:
-            # 若打空弹夹，则进入下一轮
             msg.append(plugin.next_round(g))
         return msg
 
@@ -491,120 +530,132 @@ class BuckshotRoulette(Star):
         if g[cur_player]["hp"] < 6:
             g[cur_player]["hp"] += 1
             return [
-                "你点起一根香烟，深深地吸了一口……",
-                "烟雾萦绕中，你感觉紧张稍稍缓解，恢复了 1 点血量。"
+                "你点燃一根香烟，缓缓吸入袅袅烟雾……",
+                "瞬间感觉紧张得以缓解，恢复了 1 点血量！"
             ]
         else:
             return [
-                "你点起香烟，却发现自己的状态已经满血，",
-                "抽完也只是稍微过了把瘾，对血量并无实际帮助。"
+                "你点燃香烟，但发现自己已满血，",
+                "不过这也让你稍微放松了一下。"
             ]
 
     @staticmethod
     async def use_handcuff(plugin, cid, cur_player, pick, event):
-        """手铐：跳过对方下回合"""
+        """手铐：让对方跳过下一回合"""
         g = plugin.games[cid]
         if g.get("usedHandcuff", False):
-            return ["你想再掏出手铐，却发现本回合已经用过了，冷静点吧。"]
+            return ["你试图再次使用手铐，但本回合已使用过，请冷静。"]
         other_p = f"player{1 if g['currentTurn'] == 2 else 2}"
         g[other_p]["handcuff"] = True
         g["usedHandcuff"] = True
         return [
-            "你神秘地掏出了一副手铐，瞬间拷住了对方双手……",
-            "对方下一回合将被迫跳过！"
+            "你迅速掏出手铐，瞬间锁住了对方双手……",
+            "对方下一回合将被迫放弃行动！"
         ]
 
     @staticmethod
-    async def use_epinephrine(plugin, cid, cur_player, pick_item, event):
-        """
-        肾上腺素：让对方立即使用 pick_item 道具
-        """
-        g = plugin.games[cid]
-        other_p = f"player{1 if g['currentTurn'] == 2 else 2}"
-        # 执行对方道具
-        msgs_sub = await plugin.item_list[pick_item]["use"](plugin, cid, other_p, None, event)
-        # 对方失去该道具
-        if pick_item in g[other_p]["item"]:
-            g[other_p]["item"].remove(pick_item)
-
-        return [
-            "你狠狠地将肾上腺素注射进体内，强制对方使用某个道具……",
-            f"对方只能立刻使用【{pick_item}】↓"
-        ] + msgs_sub
-
-    @staticmethod
     async def use_expired_medicine(plugin, cid, cur_player, pick, event):
-        """过期药物：50%几率 +2 血；50%几率 -1 血(可能导致自己死亡)"""
+        """过期药物：50%几率恢复2点血；50%几率损失1点血（可能导致自己死亡）"""
         g = plugin.games[cid]
         if random.random() < 0.5:
             recover = min(6 - g[cur_player]["hp"], 2)
             g[cur_player]["hp"] += recover
             return [
-                "你从包里摸出一瓶泛黄的药剂，心一横直接服下……",
-                f"竟然感觉身体一阵清爽，恢复了 {recover} 点血量！"
+                "你从口袋中摸出一瓶泛黄药剂，毫不犹豫地服下……",
+                f"顿时感觉体内充满温暖，恢复了 {recover} 点血量！"
             ]
         else:
             g[cur_player]["hp"] -= 1
             if g[cur_player]["hp"] <= 0:
                 other_p = f"player{1 if g['currentTurn'] == 2 else 2}"
                 msg = textwrap.dedent(f"""\
-                    你吞下那瓶过期药物后，立刻觉得胃里一阵剧痛……
-                    眼前一黑，你再也支撑不住，笔直地倒了下去。
+                    你吞下药剂后，胃中剧痛难忍……
+                    眼前一黑，你彻底倒下。
 
-                    {plugin.at_id(g[other_p]['id'])} 获得了胜利！
+                    {plugin.at_id(g[other_p]['id'])} 获得了最终胜利！
                 """)
-                # 先发送倒下消息
                 await event.plain_result(msg)
-                # 然后结束游戏
                 lines = plugin.game_over(cid, winner=other_p, loser=cur_player)
                 for ln in lines:
                     await event.plain_result(ln)
                 return []
             else:
                 return [
-                    "你看也不看就把这瓶过期药物吞了下去，",
-                    "突然感觉肚子一阵绞痛，损失 1 点血量……不祥的预感涌上心头。"
+                    "你盲目服下药剂，突然感到胃中一阵绞痛……",
+                    "遗憾地损失了 1 点血量。"
                 ]
 
     @staticmethod
     async def use_reverser(plugin, cid, cur_player, pick, event):
-        """逆转器：将当前膛内最后一发子弹 实弹⇔空包弹"""
+        """逆转器：将当前膛内最后一发子弹的类型进行反转"""
         g = plugin.games[cid]
         if not g["bullet"]:
-            return ["你抚摸着逆转器，却发现枪膛里什么都没有可逆转……"]
+            return ["你轻抚逆转器，却发现枪膛中空无一弹，无法逆转。"]
         old_bullet = g["bullet"].pop()
         new_bullet = "空包弹" if old_bullet == "实弹" else "实弹"
         g["bullet"].append(new_bullet)
         return [
-            "你拿起闪着奇异光泽的逆转器，对准枪膛轻轻一按……",
-            f"原本的【{old_bullet}】瞬间转换成【{new_bullet}】！"
+            "你拿起那闪烁着神秘光芒的逆转器，轻按一下……",
+            f"原本的【{old_bullet}】瞬间变为【{new_bullet}】！"
         ]
 
     @staticmethod
     async def use_once_phone(plugin, cid, cur_player, pick, event):
         """
-        一次性电话：随机告知枪内某发子弹的类型，不移除子弹
+        一次性电话：随机告知枪膛中某发子弹的类型，但不移除该子弹。
+        说明：游戏中子弹以先进后出的顺序发射，因此列表末尾为下一发（显示为第一发）。
         """
         g = plugin.games[cid]
         bullet_count = len(g["bullet"])
         if bullet_count == 0:
-            return [
-                "你拿起那神秘电话，却发现枪膛里根本没子弹可询问……",
-                "对方只留下一声冷笑，然后挂断了电话。"
-            ]
+            return ["你拿起神秘电话，却发现枪膛中空空如也……"]
+        # 随机选择一个索引，然后换算成发射顺序（列表末尾为第一发）
         idx = random.randint(0, bullet_count - 1)
+        firing_order = bullet_count - idx  # 如：若有 5 发，索引4（最后一发）为第一发，索引0为第五发
         bullet_type = g["bullet"][idx]
         return [
-            "你轻轻拨通了一次性电话，一阵电流声后，似乎有人在对面低声说：",
-            f"“告诉你个秘密，第 {idx + 1} 发子弹是【{bullet_type}】……”"
+            "你拨通了一次性电话，耳边响起低沉电子声……",
+            f"“秘密告诉你，第 {firing_order} 发子弹竟然是【{bullet_type}】！”"
         ]
 
-    # ----------------------------------------------------------------
-    # 结束游戏
-    # ----------------------------------------------------------------
+    @staticmethod
+    async def use_zhandan(plugin, cid, cur_player, pick, event):
+        """炸弹：投掷后对对手造成2点伤害（若对方有护盾则抵消）"""
+        g = plugin.games[cid]
+        oth_p = f"player{1 if g['currentTurn'] == 2 else 2}"
+        if g[oth_p].get("shield", False):
+            g[oth_p]["shield"] = False
+            return ["你投掷炸弹，但对方的护盾闪烁，将爆炸伤害完全抵消！"]
+        else:
+            g[oth_p]["hp"] -= 2
+            return ["你果断投掷炸弹，对方受到爆炸冲击，损失了 2 点血量！"]
+
+    @staticmethod
+    async def use_xingyunxing(plugin, cid, cur_player, pick, event):
+        """幸运星：随机获得血量恢复或额外道具"""
+        g = plugin.games[cid]
+        if random.random() < 0.5:
+            if g[cur_player]["hp"] < 6:
+                g[cur_player]["hp"] += 1
+                return ["幸运星闪耀，你感觉体内充满力量，血量增加了 1 点！"]
+            else:
+                return ["幸运星闪烁，但你已满血，无效。"]
+        else:
+            new_item = random.choice(list(plugin.item_list.keys()))
+            g[cur_player]["item"].append(new_item)
+            return [f"幸运星降临，你意外获得了额外道具【{new_item}】！"]
+
+    @staticmethod
+    async def use_hudun(plugin, cid, cur_player, pick, event):
+        """护盾：获得一次护盾效果，抵消下一次攻击伤害"""
+        g = plugin.games[cid]
+        g[cur_player]["shield"] = True
+        return ["你装备了护盾，下一次受到攻击时将自动抵消伤害！"]
+
+    # ----------------- 游戏结束及辅助函数 -----------------
     def game_over(self, cid: str, winner: str, loser: str):
         """
-        宣告胜者并删除游戏数据
+        宣告胜者并删除当前游戏数据。
         """
         g = self.games[cid]
         w_id = g[winner]["id"]
@@ -613,21 +664,826 @@ class BuckshotRoulette(Star):
             ══恶魔轮盘══
             {self.at_id(l_id)} 倒下了！
             {self.at_id(w_id)} 获得了最终胜利！
-            游戏结束！
+            游戏正式结束，感谢参与，期待下次再战！
         """)
         del self.games[cid]
         return [text]
 
-    # ----------------------------------------------------------------
-    # 辅助函数
-    # ----------------------------------------------------------------
     def count_bullet(self, bullet_list, key):
-        """统计 bullet_list 中某种子弹出现次数"""
+        """统计列表中指定类型子弹的数量"""
         return sum(1 for b in bullet_list if b == key)
 
     def at_id(self, user_id: str) -> str:
         """
-        仅示例：返回适用于 QQ 协议的 CQ 码写法，以 f-string 方式嵌入。
-        如果在微信等不支持 @ 的平台，这里就只能当纯文本显示。
+        返回适用于 QQ 协议的 At 消息格式（CQ码写法）。
+        若在微信等平台，则可改为纯文本显示。
         """
         return f"[CQ:at,qq={user_id}]"
+
+    # ----------------- 商店兑换功能 -----------------
+    @demon_roulette.command("兑换")
+    async def exchange_item(self, event: AstrMessageEvent, source: str, target: str):
+        """
+        兑换道具：如果你拥有 2 个相同的【source】道具，则可兑换为 1 个【target】道具。
+        允许的兑换规则：
+          香烟：可兑换为 手锯、放大镜、炸弹、幸运星、护盾
+          啤酒：可兑换为 手铐、护盾
+          手锯：可兑换为 逆转器
+          放大镜：可兑换为 一次性电话
+        """
+        allowed_exchanges = {
+            "香烟": ["手锯", "放大镜", "炸弹", "幸运星", "护盾"],
+            "啤酒": ["手铐", "护盾"],
+            "手锯": ["逆转器"],
+            "放大镜": ["一次性电话"],
+        }
+        cid = self.get_channel_id(event)
+        if cid not in self.games or self.games[cid]["status"] != "started":
+            yield event.plain_result("当前没有正在进行的游戏。")
+            return
+        if source not in allowed_exchanges or target not in allowed_exchanges[source]:
+            yield event.plain_result(f"【{source}】无法兑换成【{target}】。")
+            return
+        game = self.games[cid]
+        cur_player = f"player{game['currentTurn']}"
+        if game[cur_player]["item"].count(source) < 2:
+            yield event.plain_result(f"你没有足够的【{source}】进行兑换（需要 2 个）。")
+            return
+        for _ in range(2):
+            game[cur_player]["item"].remove(source)
+        game[cur_player]["item"].append(target)
+        yield event.plain_result(f"兑换成功：2 个【{source}】兑换成 1 个【{target}】！")
+
+    # ----------------- Debug 模式（仅管理员可用） -----------------
+    @demon_roulette.group("debug")
+    def debug(self):
+        """Debug 模式：仅限管理员使用，用于给玩家道具、修改血量、查询状态等"""
+        pass
+
+    @debug.command("给道具")
+    async def debug_give_item(self, event: AstrMessageEvent, target: str, item: str, quantity: int):
+        if event.get_sender_id() not in self.config["admin"]:
+            yield event.plain_result("权限不足！")
+            return
+        cid = self.get_channel_id(event)
+        if cid not in self.games:
+            yield event.plain_result("当前群中没有游戏。")
+            return
+        game = self.games[cid]
+        player = None
+        if game["player1"]["id"] == target:
+            player = game["player1"]
+        elif "player2" in game and game["player2"]["id"] == target:
+            player = game["player2"]
+        if not player:
+            yield event.plain_result("指定的玩家不在当前游戏中。")
+            return
+        for _ in range(quantity):
+            player["item"].append(item)
+        yield event.plain_result(f"已给玩家 {player['name']} 添加了 {quantity} 个【{item}】。")
+
+    @debug.command("修改血量")
+    async def debug_set_hp(self, event: AstrMessageEvent, target: str, hp: int):
+        if event.get_sender_id() not in self.config["admin"]:
+            yield event.plain_result("权限不足！")
+            return
+        cid = self.get_channel_id(event)
+        if cid not in self.games:
+            yield event.plain_result("当前群中没有游戏。")
+            return
+        game = self.games[cid]
+        player = None
+        if game["player1"]["id"] == target:
+            player = game["player1"]
+        elif "player2" in game and game["player2"]["id"] == target:
+            player = game["player2"]
+        if not player:
+            yield event.plain_result("指定的玩家不在当前游戏中。")
+            return
+        player["hp"] = hp
+        yield event.plain_result(f"已将玩家 {player['name']} 的血量设置为 {hp}。")
+
+    @debug.command("查询子弹")
+    async def debug_query_bullet(self, event: AstrMessageEvent):
+        if event.get_sender_id() not in self.config["admin"]:
+            yield event.plain_result("权限不足！")
+            return
+        cid = self.get_channel_id(event)
+        if cid not in self.games:
+            yield event.plain_result("当前群中没有游戏。")
+            return
+        bullet_list = self.games[cid].get("bullet", [])
+        yield event.plain_result(f"当前弹夹：{bullet_list}")
+
+    @debug.command("查询游戏")
+    async def debug_query_game(self, event: AstrMessageEvent):
+        if event.get_sender_id() not in self.config["admin"]:
+            yield event.plain_result("权限不足！")
+            return
+        cid = self.get_channel_id(event)
+        if cid not in self.games:
+            yield event.plain_result("当前群中没有游戏。")
+            return
+        yield event.plain_result(f"当前游戏数据：{self.games[cid]}")
+
+    # ----------------- 消息监听 -----------------
+    @event_message_type(EventMessageType.ALL)
+    async def on_message(self, event: AstrMessageEvent):
+        """
+        监听消息：如果游戏正在进行且处于当前玩家回合，
+        则判断玩家是否选择了“自己”或“对方”开枪，或使用道具。
+        """
+        cid = self.get_channel_id(event)
+        if cid not in self.games or self.games[cid]["status"] != "started":
+            return
+        g = self.games[cid]
+        cur_player = f"player{g['currentTurn']}"
+        if g[cur_player]["id"] != event.get_sender_id():
+            return
+        content = event.message_obj.message_str.strip()
+        if content in ["自己", "对方"]:
+            async for msg_ret in self.fire(cid, content, event):
+                yield msg_ret
+            return
+        if content in g[cur_player]["item"]:
+            async for msg_ret in self.use_item(cid, content, event):
+                yield msg_ret
+
+    # ----------------- 核心函数：开枪 -----------------
+    async def fire(self, cid: str, target: str, event: AstrMessageEvent):
+        """
+        开枪逻辑：根据枪膛中子弹类型计算伤害、切换回合或结束游戏，
+        并反馈详细情景描述。
+        """
+        game = self.games[cid]
+        cur_p = f"player{game['currentTurn']}"
+        oth_p = f"player{1 if game['currentTurn'] == 2 else 2}"
+        bullet = game["bullet"].pop() if game["bullet"] else None
+        if not bullet:
+            yield event.plain_result("══恶魔轮盘══\n当前弹夹已空，自动进入下一轮。")
+            yield event.plain_result(self.next_round(game))
+            return
+        text = f"══恶魔轮盘══\n你将枪口对准了【{target}】，扣下扳机……结果是【{bullet}】\n"
+        if bullet == "实弹":
+            damage = 2 if game["double"] else 1
+            if target == "自己":
+                game[cur_p]["hp"] -= damage
+                text += f"你受到了猛烈反噬，损失了 {damage} 点血量！"
+                if game[cur_p]["hp"] <= 0:
+                    yield event.plain_result(text)
+                    lines = self.game_over(cid, winner=oth_p, loser=cur_p)
+                    for ln in lines:
+                        yield event.plain_result(ln)
+                    return
+            else:
+                if game[oth_p].get("shield", False):
+                    text += "但对方的护盾闪耀，将伤害全部吸收！"
+                    game[oth_p]["shield"] = False
+                else:
+                    game[oth_p]["hp"] -= damage
+                    text += f"对方被你狠狠击中，损失了 {damage} 点血量！"
+                    if game[oth_p]["hp"] <= 0:
+                        yield event.plain_result(text)
+                        lines = self.game_over(cid, winner=cur_p, loser=oth_p)
+                        for ln in lines:
+                            yield event.plain_result(ln)
+                        return
+        if bullet == "空包弹" and target == "自己":
+            text += "\n幸好只是空包弹，你仍保有行动权！"
+        else:
+            if not game[oth_p]["handcuff"]:
+                game["currentTurn"] = 1 if game["currentTurn"] == 2 else 2
+                new_p = f"player{game['currentTurn']}"
+                text += f"\n切换回合：现在由 {self.at_id(game[new_p]['id'])} 决定下一步！"
+                game["usedHandcuff"] = False
+            else:
+                game[oth_p]["handcuff"] = False
+                text += "\n对方被手铐束缚，无法反击，你继续掌控局面！"
+        yield event.plain_result(text)
+        game["double"] = False
+        if len(game["bullet"]) == 0:
+            yield event.plain_result(self.next_round(game))
+
+    def next_round(self, game: dict):
+        """
+        进入下一轮：重新生成弹夹，并为双方发放新的随机道具。
+        """
+        game["round"] += 1
+        game["bullet"] = generate_random_bullet_list()
+        bullet_list = game["bullet"]
+        item_pool = list(self.item_list.keys())
+        item_count = random.randint(2, 5)
+        cur_p = f"player{game['currentTurn']}"
+        oth_p = f"player{1 if game['currentTurn'] == 2 else 2}"
+        for _ in range(item_count):
+            game[cur_p]["item"].append(random.choice(item_pool))
+            game[oth_p]["item"].append(random.choice(item_pool))
+        game["player1"]["item"] = game["player1"]["item"][:8]
+        game["player2"]["item"] = game["player2"]["item"][:8]
+        msg = textwrap.dedent(f"""\
+            ══恶魔轮盘══
+            弹夹打空，进入第 {game["round"]} 轮！
+            新弹夹中共有 {len(bullet_list)} 发子弹，
+            其中实弹 {self.count_bullet(bullet_list, "实弹")} 发，空包弹 {self.count_bullet(bullet_list, "空包弹")} 发。
+            双方各获得 {item_count} 个随机道具（上限 8）。
+        """)
+        return msg
+
+    async def use_item(self, cid: str, item: str, event: AstrMessageEvent):
+        """
+        使用道具：调用对应道具效果，并将反馈信息发送至聊天，
+        使用成功后从玩家背包中移除该道具。
+        """
+        game = self.games[cid]
+        cur_p = f"player{game['currentTurn']}"
+        yield event.plain_result(f"你尝试使用【{item}】道具……")
+        lines = await self.item_list[item]["use"](self, cid, cur_p, None, event)
+        for ln in lines:
+            yield event.plain_result(ln)
+        if item in game[cur_p]["item"]:
+            game[cur_p]["item"].remove(item)
+            yield event.plain_result(f"【{item}】已从你的背包中移除，希望这能助你一臂之力！")
+
+    # ----------------- 各道具具体实现 -----------------
+    @staticmethod
+    async def use_saw(plugin, cid, cur_player, pick, event):
+        """手锯：下一发造成双倍伤害，不可叠加"""
+        g = plugin.games[cid]
+        g["double"] = True
+        return [
+            "你小心翼翼地取出手锯，锯短了枪管……",
+            "【手锯】效果启动：下一发子弹伤害翻倍！"
+        ]
+
+    @staticmethod
+    async def use_magnifier(plugin, cid, cur_player, pick, event):
+        """放大镜：查看当前膛内的子弹"""
+        g = plugin.games[cid]
+        if not g["bullet"]:
+            return ["你拿着放大镜仔细查看，结果发现枪膛中已无子弹。"]
+        bullet_type = g["bullet"][-1]
+        return [
+            "你取出放大镜，凑近枪膛仔细观察……",
+            f"发现下一发子弹是【{bullet_type}】！"
+        ]
+
+    @staticmethod
+    async def use_beer(plugin, cid, cur_player, pick, event):
+        """啤酒：卸下当前膛内的一发子弹"""
+        g = plugin.games[cid]
+        if not g["bullet"]:
+            return ["你试图用啤酒卸下子弹，但枪膛已经空了……"]
+        bullet = g["bullet"].pop()
+        msg = [
+            "你大口喝下冰镇啤酒，猛然敲击枪膛……",
+            f"“叮”地一声，一发【{bullet}】弹飞而出！"
+        ]
+        if len(g["bullet"]) == 0:
+            msg.append(plugin.next_round(g))
+        return msg
+
+    @staticmethod
+    async def use_cigarette(plugin, cid, cur_player, pick, event):
+        """香烟：恢复1点生命值（最多6点）"""
+        g = plugin.games[cid]
+        if g[cur_player]["hp"] < 6:
+            g[cur_player]["hp"] += 1
+            return [
+                "你点燃一根香烟，缓缓吸入袅袅烟雾……",
+                "感觉紧张得以缓解，恢复了 1 点血量！"
+            ]
+        else:
+            return [
+                "你点燃香烟，但发现自己已满血，",
+                "不过这也让你稍感放松。"
+            ]
+
+    @staticmethod
+    async def use_handcuff(plugin, cid, cur_player, pick, event):
+        """手铐：让对方跳过下一回合"""
+        g = plugin.games[cid]
+        if g.get("usedHandcuff", False):
+            return ["你试图再次使用手铐，但本回合已用过，请冷静。"]
+        other_p = f"player{1 if g['currentTurn'] == 2 else 2}"
+        g[other_p]["handcuff"] = True
+        g["usedHandcuff"] = True
+        return [
+            "你迅速掏出手铐，瞬间锁住对方双手……",
+            "对方下一回合将被迫放弃行动！"
+        ]
+
+    @staticmethod
+    async def use_expired_medicine(plugin, cid, cur_player, pick, event):
+        """过期药物：50%几率恢复2点血；50%几率损失1点血（可能导致自己死亡）"""
+        g = plugin.games[cid]
+        if random.random() < 0.5:
+            recover = min(6 - g[cur_player]["hp"], 2)
+            g[cur_player]["hp"] += recover
+            return [
+                "你从口袋中摸出一瓶泛黄药剂，毫不犹豫地服下……",
+                f"顿时感觉体内充满温暖，恢复了 {recover} 点血量！"
+            ]
+        else:
+            g[cur_player]["hp"] -= 1
+            if g[cur_player]["hp"] <= 0:
+                other_p = f"player{1 if g['currentTurn'] == 2 else 2}"
+                msg = textwrap.dedent(f"""\
+                    你吞下药剂后，胃中剧痛难忍……
+                    眼前一黑，你彻底倒下。
+
+                    {plugin.at_id(g[other_p]['id'])} 获得了最终胜利！
+                """)
+                await event.plain_result(msg)
+                lines = plugin.game_over(cid, winner=other_p, loser=cur_player)
+                for ln in lines:
+                    await event.plain_result(ln)
+                return []
+            else:
+                return [
+                    "你盲目服下药剂，突然感到胃中一阵绞痛……",
+                    "遗憾地损失了 1 点血量。"
+                ]
+
+    @staticmethod
+    async def use_reverser(plugin, cid, cur_player, pick, event):
+        """逆转器：将当前膛内最后一发子弹的类型进行反转"""
+        g = plugin.games[cid]
+        if not g["bullet"]:
+            return ["你轻抚逆转器，却发现枪膛中无子弹可逆转。"]
+        old_bullet = g["bullet"].pop()
+        new_bullet = "空包弹" if old_bullet == "实弹" else "实弹"
+        g["bullet"].append(new_bullet)
+        return [
+            "你拿起那闪烁着神秘光芒的逆转器，轻按一下……",
+            f"原本的【{old_bullet}】瞬间变为【{new_bullet}】！"
+        ]
+
+    @staticmethod
+    async def use_once_phone(plugin, cid, cur_player, pick, event):
+        """
+        一次性电话：随机告知枪膛中某发子弹的类型，但不移除该子弹。
+        说明：游戏中子弹以先进后出的顺序发射，因此列表末尾为下一发（显示为第一发）。
+        """
+        g = plugin.games[cid]
+        bullet_count = len(g["bullet"])
+        if bullet_count == 0:
+            return ["你拿起神秘电话，却发现枪膛中空无一弹……"]
+        idx = random.randint(0, bullet_count - 1)
+        firing_order = bullet_count - idx  # 列表末尾为第一发
+        bullet_type = g["bullet"][idx]
+        return [
+            "你拨通了一次性电话，耳边响起低沉电子声……",
+            f"“秘密告诉你，第 {firing_order} 发子弹竟然是【{bullet_type}】！”"
+        ]
+
+    @staticmethod
+    async def use_zhandan(plugin, cid, cur_player, pick, event):
+        """炸弹：投掷后对对手造成2点伤害（若对方有护盾则抵消）"""
+        g = plugin.games[cid]
+        oth_p = f"player{1 if g['currentTurn'] == 2 else 2}"
+        if g[oth_p].get("shield", False):
+            g[oth_p]["shield"] = False
+            return ["你投掷炸弹，但对方的护盾闪烁，将爆炸伤害全部抵消！"]
+        else:
+            g[oth_p]["hp"] -= 2
+            return ["你果断投掷炸弹，对方受到猛烈爆炸冲击，损失了 2 点血量！"]
+
+    @staticmethod
+    async def use_xingyunxing(plugin, cid, cur_player, pick, event):
+        """幸运星：随机获得血量恢复或额外道具"""
+        g = plugin.games[cid]
+        if random.random() < 0.5:
+            if g[cur_player]["hp"] < 6:
+                g[cur_player]["hp"] += 1
+                return ["幸运星闪耀，你感觉体内充满力量，血量增加了 1 点！"]
+            else:
+                return ["幸运星闪烁，但你已满血，无效。"]
+        else:
+            new_item = random.choice(list(plugin.item_list.keys()))
+            g[cur_player]["item"].append(new_item)
+            return [f"幸运星降临，你意外获得了额外道具【{new_item}】！"]
+
+    @staticmethod
+    async def use_hudun(plugin, cid, cur_player, pick, event):
+        """护盾：获得护盾效果，下一次攻击伤害将被吸收"""
+        g = plugin.games[cid]
+        g[cur_player]["shield"] = True
+        return ["你装备了护盾，下一次受到攻击时将自动抵消伤害！"]
+
+    # ----------------- 辅助函数 -----------------
+    def game_over(self, cid: str, winner: str, loser: str):
+        """
+        宣告胜者并删除当前游戏数据。
+        """
+        g = self.games[cid]
+        w_id = g[winner]["id"]
+        l_id = g[loser]["id"]
+        text = textwrap.dedent(f"""\
+            ══恶魔轮盘══
+            {self.at_id(l_id)} 倒下了！
+            {self.at_id(w_id)} 获得了最终胜利！
+            游戏正式结束，感谢参与，期待下次再战！
+        """)
+        del self.games[cid]
+        return [text]
+
+    def count_bullet(self, bullet_list, key):
+        """统计子弹列表中指定类型子弹的数量"""
+        return sum(1 for b in bullet_list if b == key)
+
+    def at_id(self, user_id: str) -> str:
+        """
+        返回适用于 QQ 协议的 At 消息格式（CQ码写法），
+        若在微信等平台，则可修改为纯文本显示。
+        """
+        return f"[CQ:at,qq={user_id}]"
+
+    # ----------------- 商店兑换功能 -----------------
+    @demon_roulette.command("兑换")
+    async def exchange_item(self, event: AstrMessageEvent, source: str, target: str):
+        """
+        兑换道具：如果你拥有 2 个相同的【source】道具，则可兑换为 1 个【target】道具。
+        允许的兑换规则：
+          香烟：可兑换为 手锯、放大镜、炸弹、幸运星、护盾
+          啤酒：可兑换为 手铐、护盾
+          手锯：可兑换为 逆转器
+          放大镜：可兑换为 一次性电话
+        """
+        allowed_exchanges = {
+            "香烟": ["手锯", "放大镜", "炸弹", "幸运星", "护盾"],
+            "啤酒": ["手铐", "护盾"],
+            "手锯": ["逆转器"],
+            "放大镜": ["一次性电话"],
+        }
+        cid = self.get_channel_id(event)
+        if cid not in self.games or self.games[cid]["status"] != "started":
+            yield event.plain_result("当前没有正在进行的游戏。")
+            return
+        if source not in allowed_exchanges or target not in allowed_exchanges[source]:
+            yield event.plain_result(f"【{source}】无法兑换成【{target}】。")
+            return
+        game = self.games[cid]
+        cur_player = f"player{game['currentTurn']}"
+        if game[cur_player]["item"].count(source) < 2:
+            yield event.plain_result(f"你没有足够的【{source}】进行兑换（需要 2 个）。")
+            return
+        for _ in range(2):
+            game[cur_player]["item"].remove(source)
+        game[cur_player]["item"].append(target)
+        yield event.plain_result(f"兑换成功：2 个【{source}】已兑换成 1 个【{target}】！")
+
+    # ----------------- Debug 模式（仅管理员可用） -----------------
+    @demon_roulette.group("debug")
+    def debug(self):
+        """Debug 模式：仅限管理员使用，用于给玩家道具、修改血量、查询状态等"""
+        pass
+
+    @debug.command("给道具")
+    async def debug_give_item(self, event: AstrMessageEvent, target: str, item: str, quantity: int):
+        if event.get_sender_id() not in self.config["admin"]:
+            yield event.plain_result("权限不足！")
+            return
+        cid = self.get_channel_id(event)
+        if cid not in self.games:
+            yield event.plain_result("当前群中没有游戏。")
+            return
+        game = self.games[cid]
+        player = None
+        if game["player1"]["id"] == target:
+            player = game["player1"]
+        elif "player2" in game and game["player2"]["id"] == target:
+            player = game["player2"]
+        if not player:
+            yield event.plain_result("指定的玩家不在当前游戏中。")
+            return
+        for _ in range(quantity):
+            player["item"].append(item)
+        yield event.plain_result(f"已给玩家 {player['name']} 添加了 {quantity} 个【{item}】。")
+
+    @debug.command("修改血量")
+    async def debug_set_hp(self, event: AstrMessageEvent, target: str, hp: int):
+        if event.get_sender_id() not in self.config["admin"]:
+            yield event.plain_result("权限不足！")
+            return
+        cid = self.get_channel_id(event)
+        if cid not in self.games:
+            yield event.plain_result("当前群中没有游戏。")
+            return
+        game = self.games[cid]
+        player = None
+        if game["player1"]["id"] == target:
+            player = game["player1"]
+        elif "player2" in game and game["player2"]["id"] == target:
+            player = game["player2"]
+        if not player:
+            yield event.plain_result("指定的玩家不在当前游戏中。")
+            return
+        player["hp"] = hp
+        yield event.plain_result(f"已将玩家 {player['name']} 的血量设置为 {hp}。")
+
+    @debug.command("查询子弹")
+    async def debug_query_bullet(self, event: AstrMessageEvent):
+        if event.get_sender_id() not in self.config["admin"]:
+            yield event.plain_result("权限不足！")
+            return
+        cid = self.get_channel_id(event)
+        if cid not in self.games:
+            yield event.plain_result("当前群中没有游戏。")
+            return
+        bullet_list = self.games[cid].get("bullet", [])
+        yield event.plain_result(f"当前弹夹：{bullet_list}")
+
+    @debug.command("查询游戏")
+    async def debug_query_game(self, event: AstrMessageEvent):
+        if event.get_sender_id() not in self.config["admin"]:
+            yield event.plain_result("权限不足！")
+            return
+        cid = self.get_channel_id(event)
+        if cid not in self.games:
+            yield event.plain_result("当前群中没有游戏。")
+            return
+        yield event.plain_result(f"当前游戏数据：{self.games[cid]}")
+
+    # ----------------- 消息监听 -----------------
+    @event_message_type(EventMessageType.ALL)
+    async def on_message(self, event: AstrMessageEvent):
+        """
+        监听消息：如果游戏正在进行且处于当前玩家回合，
+        则判断玩家是否选择了“自己”或“对方”开枪，或使用道具。
+        """
+        cid = self.get_channel_id(event)
+        if cid not in self.games or self.games[cid]["status"] != "started":
+            return
+        g = self.games[cid]
+        cur_player = f"player{g['currentTurn']}"
+        if g[cur_player]["id"] != event.get_sender_id():
+            return
+        content = event.message_obj.message_str.strip()
+        if content in ["自己", "对方"]:
+            async for msg_ret in self.fire(cid, content, event):
+                yield msg_ret
+            return
+        if content in g[cur_player]["item"]:
+            async for msg_ret in self.use_item(cid, content, event):
+                yield msg_ret
+
+    # ----------------- 核心函数：开枪 -----------------
+    async def fire(self, cid: str, target: str, event: AstrMessageEvent):
+        """
+        开枪逻辑：根据当前枪膛中子弹的类型计算伤害、切换回合或结束游戏，
+        并反馈详细情景描述。
+        """
+        game = self.games[cid]
+        cur_p = f"player{game['currentTurn']}"
+        oth_p = f"player{1 if game['currentTurn'] == 2 else 2}"
+        bullet = game["bullet"].pop() if game["bullet"] else None
+        if not bullet:
+            yield event.plain_result("══恶魔轮盘══\n当前弹夹已空，自动进入下一轮。")
+            yield event.plain_result(self.next_round(game))
+            return
+        text = f"══恶魔轮盘══\n你将枪口对准了【{target}】，扣下扳机……结果是【{bullet}】\n"
+        if bullet == "实弹":
+            damage = 2 if game["double"] else 1
+            if target == "自己":
+                game[cur_p]["hp"] -= damage
+                text += f"你遭受猛烈反噬，损失了 {damage} 点血量！"
+                if game[cur_p]["hp"] <= 0:
+                    yield event.plain_result(text)
+                    lines = self.game_over(cid, winner=oth_p, loser=cur_p)
+                    for ln in lines:
+                        yield event.plain_result(ln)
+                    return
+            else:
+                if game[oth_p].get("shield", False):
+                    text += "但对方的护盾闪耀，将伤害全部吸收！"
+                    game[oth_p]["shield"] = False
+                else:
+                    game[oth_p]["hp"] -= damage
+                    text += f"对方被你狠狠击中，损失了 {damage} 点血量！"
+                    if game[oth_p]["hp"] <= 0:
+                        yield event.plain_result(text)
+                        lines = self.game_over(cid, winner=cur_p, loser=oth_p)
+                        for ln in lines:
+                            yield event.plain_result(ln)
+                        return
+        if bullet == "空包弹" and target == "自己":
+            text += "\n幸好只是空包弹，你仍保有行动权！"
+        else:
+            if not game[oth_p]["handcuff"]:
+                game["currentTurn"] = 1 if game["currentTurn"] == 2 else 2
+                new_p = f"player{game['currentTurn']}"
+                text += f"\n切换回合：现在由 {self.at_id(game[new_p]['id'])} 决定下一步！"
+                game["usedHandcuff"] = False
+            else:
+                game[oth_p]["handcuff"] = False
+                text += "\n对方被手铐束缚，无法反击，你继续掌控局面！"
+        yield event.plain_result(text)
+        game["double"] = False
+        if len(game["bullet"]) == 0:
+            yield event.plain_result(self.next_round(game))
+
+    def next_round(self, game: dict):
+        """
+        进入下一轮：重新生成弹夹，并为双方发放新的随机道具。
+        """
+        game["round"] += 1
+        game["bullet"] = generate_random_bullet_list()
+        bullet_list = game["bullet"]
+        item_pool = list(self.item_list.keys())
+        item_count = random.randint(2, 5)
+        cur_p = f"player{game['currentTurn']}"
+        oth_p = f"player{1 if game['currentTurn'] == 2 else 2}"
+        for _ in range(item_count):
+            game[cur_p]["item"].append(random.choice(item_pool))
+            game[oth_p]["item"].append(random.choice(item_pool))
+        game["player1"]["item"] = game["player1"]["item"][:8]
+        game["player2"]["item"] = game["player2"]["item"][:8]
+        msg = textwrap.dedent(f"""\
+            ══恶魔轮盘══
+            弹夹打空，进入第 {game["round"]} 轮！
+            新弹夹中共有 {len(bullet_list)} 发子弹，
+            其中实弹 {self.count_bullet(bullet_list, "实弹")} 发，空包弹 {self.count_bullet(bullet_list, "空包弹")} 发。
+            双方各获得 {item_count} 个随机道具（上限 8）。
+        """)
+        return msg
+
+    async def use_item(self, cid: str, item: str, event: AstrMessageEvent):
+        """
+        使用道具：调用对应道具效果，并将反馈信息发送到聊天，
+        使用成功后从玩家背包中移除该道具。
+        """
+        game = self.games[cid]
+        cur_p = f"player{game['currentTurn']}"
+        yield event.plain_result(f"你尝试使用【{item}】道具……")
+        lines = await self.item_list[item]["use"](self, cid, cur_p, None, event)
+        for ln in lines:
+            yield event.plain_result(ln)
+        if item in game[cur_p]["item"]:
+            game[cur_p]["item"].remove(item)
+            yield event.plain_result(f"【{item}】已从你的背包中移除，希望这能助你一臂之力！")
+
+    # ----------------- 各道具具体实现 -----------------
+    @staticmethod
+    async def use_saw(plugin, cid, cur_player, pick, event):
+        """手锯：下一发造成双倍伤害，不可叠加"""
+        g = plugin.games[cid]
+        g["double"] = True
+        return [
+            "你小心翼翼地取出手锯，锯短了枪管……",
+            "【手锯】效果启动：下一发子弹伤害翻倍！"
+        ]
+
+    @staticmethod
+    async def use_magnifier(plugin, cid, cur_player, pick, event):
+        """放大镜：查看当前膛内的子弹"""
+        g = plugin.games[cid]
+        if not g["bullet"]:
+            return ["你拿着放大镜仔细查看，结果发现枪膛中已无子弹。"]
+        bullet_type = g["bullet"][-1]
+        return [
+            "你取出放大镜，凑近枪膛仔细观察……",
+            f"发现下一发子弹是【{bullet_type}】！"
+        ]
+
+    @staticmethod
+    async def use_beer(plugin, cid, cur_player, pick, event):
+        """啤酒：卸下当前膛内的一发子弹"""
+        g = plugin.games[cid]
+        if not g["bullet"]:
+            return ["你试图用啤酒卸下子弹，但枪膛已空。"]
+        bullet = g["bullet"].pop()
+        msg = [
+            "你大口喝下冰镇啤酒，猛然敲击枪膛……",
+            f"“叮”地一声，一发【{bullet}】弹飞而出！"
+        ]
+        if len(g["bullet"]) == 0:
+            msg.append(plugin.next_round(g))
+        return msg
+
+    @staticmethod
+    async def use_cigarette(plugin, cid, cur_player, pick, event):
+        """香烟：恢复1点生命值（最多6点）"""
+        g = plugin.games[cid]
+        if g[cur_player]["hp"] < 6:
+            g[cur_player]["hp"] += 1
+            return [
+                "你点燃一根香烟，缓缓吸入袅袅烟雾……",
+                "感觉紧张得以缓解，恢复了 1 点血量！"
+            ]
+        else:
+            return [
+                "你点燃香烟，却发现自己已满血，",
+                "不过这也让你稍感放松。"
+            ]
+
+    @staticmethod
+    async def use_handcuff(plugin, cid, cur_player, pick, event):
+        """手铐：让对方跳过下一回合"""
+        g = plugin.games[cid]
+        if g.get("usedHandcuff", False):
+            return ["你试图再次使用手铐，但本回合已使用过，请冷静。"]
+        other_p = f"player{1 if g['currentTurn'] == 2 else 2}"
+        g[other_p]["handcuff"] = True
+        g["usedHandcuff"] = True
+        return [
+            "你迅速掏出手铐，瞬间锁住了对方双手……",
+            "对方下一回合将被迫放弃行动！"
+        ]
+
+    @staticmethod
+    async def use_expired_medicine(plugin, cid, cur_player, pick, event):
+        """过期药物：50%几率恢复2点血；50%几率损失1点血（可能导致自己死亡）"""
+        g = plugin.games[cid]
+        if random.random() < 0.5:
+            recover = min(6 - g[cur_player]["hp"], 2)
+            g[cur_player]["hp"] += recover
+            return [
+                "你从口袋中摸出一瓶泛黄药剂，毫不犹豫地服下……",
+                f"顿时感觉体内充满温暖，恢复了 {recover} 点血量！"
+            ]
+        else:
+            g[cur_player]["hp"] -= 1
+            if g[cur_player]["hp"] <= 0:
+                other_p = f"player{1 if g['currentTurn'] == 2 else 2}"
+                msg = textwrap.dedent(f"""\
+                    你吞下药剂后，胃中剧痛难忍……
+                    眼前一黑，你彻底倒下。
+
+                    {plugin.at_id(g[other_p]['id'])} 获得了最终胜利！
+                """)
+                await event.plain_result(msg)
+                lines = plugin.game_over(cid, winner=other_p, loser=cur_player)
+                for ln in lines:
+                    await event.plain_result(ln)
+                return []
+            else:
+                return [
+                    "你盲目服下药剂，突然感到胃中一阵绞痛……",
+                    "遗憾地损失了 1 点血量。"
+                ]
+
+    @staticmethod
+    async def use_reverser(plugin, cid, cur_player, pick, event):
+        """逆转器：将当前膛内最后一发子弹的类型进行反转"""
+        g = plugin.games[cid]
+        if not g["bullet"]:
+            return ["你轻抚逆转器，却发现枪膛中无子弹可逆转。"]
+        old_bullet = g["bullet"].pop()
+        new_bullet = "空包弹" if old_bullet == "实弹" else "实弹"
+        g["bullet"].append(new_bullet)
+        return [
+            "你拿起那闪烁着神秘光芒的逆转器，轻按一下……",
+            f"原本的【{old_bullet}】瞬间变为【{new_bullet}】！"
+        ]
+
+    @staticmethod
+    async def use_once_phone(plugin, cid, cur_player, pick, event):
+        """
+        一次性电话：随机告知枪膛中某发子弹的类型，但不移除该子弹。
+        说明：子弹列表以先进后出顺序发射，因此列表末尾为下一发（显示为第一发）。
+        """
+        g = plugin.games[cid]
+        bullet_count = len(g["bullet"])
+        if bullet_count == 0:
+            return ["你拿起神秘电话，却发现枪膛中空空如也……"]
+        idx = random.randint(0, bullet_count - 1)
+        firing_order = bullet_count - idx  # 列表末尾为第一发
+        bullet_type = g["bullet"][idx]
+        return [
+            "你拨通了一次性电话，耳边响起低沉电子声……",
+            f"“秘密告诉你，第 {firing_order} 发子弹竟是【{bullet_type}】！”"
+        ]
+
+    @staticmethod
+    async def use_zhandan(plugin, cid, cur_player, pick, event):
+        """炸弹：投掷后对对手造成2点伤害（若对方有护盾则抵消）"""
+        g = plugin.games[cid]
+        oth_p = f"player{1 if g['currentTurn'] == 2 else 2}"
+        if g[oth_p].get("shield", False):
+            g[oth_p]["shield"] = False
+            return ["你投掷炸弹，但对方的护盾闪烁，将爆炸伤害全部抵消！"]
+        else:
+            g[oth_p]["hp"] -= 2
+            return ["你果断投掷炸弹，对方受到爆炸冲击，损失了 2 点血量！"]
+
+    @staticmethod
+    async def use_xingyunxing(plugin, cid, cur_player, pick, event):
+        """幸运星：随机获得血量恢复或额外道具"""
+        g = plugin.games[cid]
+        if random.random() < 0.5:
+            if g[cur_player]["hp"] < 6:
+                g[cur_player]["hp"] += 1
+                return ["幸运星闪耀，你感觉体内充满力量，血量增加了 1 点！"]
+            else:
+                return ["幸运星闪烁，但你已满血，无效。"]
+        else:
+            new_item = random.choice(list(plugin.item_list.keys()))
+            g[cur_player]["item"].append(new_item)
+            return [f"幸运星降临，你意外获得了额外道具【{new_item}】！"]
+
+    @staticmethod
+    async def use_hudun(plugin, cid, cur_player, pick, event):
+        """护盾：获得护盾效果，下一次受到攻击时抵消伤害"""
+        g = plugin.games[cid]
+        g[cur_player]["shield"] = True
+        return ["你装备了护盾，下一次攻击将被护盾吸收，无伤！"]
