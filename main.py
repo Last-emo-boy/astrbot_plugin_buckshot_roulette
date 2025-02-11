@@ -20,7 +20,7 @@ def generate_random_bullet_list():
 
 @register(
     "astrbot_plugin_buckshot_roulette",  # 插件唯一识别名
-    "w33d",                         # 作者
+    "w33d",                              # 作者
     "恶魔轮盘 - Buckshot Roulette",       # 简短描述
     "1.1.0"                              # 版本号
 )
@@ -129,7 +129,7 @@ class BuckshotRoulette(Star):
                 "status": "waiting",
             }
             asyncio.create_task(self.wait_for_join_timeout(cid, event))
-            yield event.plain_result(textwrap.dedent(f"""\
+            yield event.plain_result(textwrap.dedent(f"""\ 
             ══恶魔轮盘══
             游戏创建成功！
             玩家1：{event.get_sender_name()} ({event.get_sender_id()})
@@ -179,7 +179,7 @@ class BuckshotRoulette(Star):
             "shield": False
         }
         self.games[cid]["status"] = "full"
-        yield event.plain_result(textwrap.dedent(f"""\
+        yield event.plain_result(textwrap.dedent(f"""\ 
             ══恶魔轮盘══
             成功加入游戏！
             玩家1：{self.games[cid]['player1']['name']} ({self.games[cid]['player1']['id']})
@@ -219,16 +219,16 @@ class BuckshotRoulette(Star):
         for _ in range(item_count_base):
             self.games[cid][second_p]["item"].append(random.choice(list(self.item_list.keys())))
         bullet_list = self.games[cid]["bullet"]
-        yield event.plain_result(textwrap.dedent(f"""\
+        yield event.plain_result(textwrap.dedent(f"""\ 
             ══恶魔轮盘══
-            游戏开始！
+            游戏开始!
             玩家1：{self.games[cid]["player1"]["name"]} ({self.games[cid]["player1"]["id"]})
             玩家2：{self.games[cid]["player2"]["name"]} ({self.games[cid]["player2"]["id"]})
-            由 {self.at_id(self.games[cid][first_p]["id"])} 先手！
-            先手获得 {item_count_base - 1} 个道具，后手获得 {item_count_base} 个道具。
-            当前弹夹中共有 {len(bullet_list)} 发子弹，
-            其中实弹 {self.count_bullet(bullet_list, "实弹")} 发，空包弹 {self.count_bullet(bullet_list, "空包弹")} 发。
-            请发送“/恶魔轮盘 对战信息”查看详细情况，祝你好运！
+            由 {self.at_id(self.games[cid][first_p]["name"])} 先手!
+            先手获得 {item_count_base - 1} 个道具，后手获得 {item_count_base} 个道具.
+            当前弹夹中共有 {len(bullet_list)} 发子弹,
+            其中实弹 {self.count_bullet(bullet_list, "实弹")} 发, 空包弹 {self.count_bullet(bullet_list, "空包弹")} 发.
+            请发送“/恶魔轮盘 对战信息”查看详细情况，祝你好运!
         """))
 
     @demon_roulette.command("对战信息")
@@ -243,7 +243,7 @@ class BuckshotRoulette(Star):
         g = self.games[cid]
         p1 = g["player1"]
         p2 = g["player2"]
-        msg = textwrap.dedent(f"""\
+        msg = textwrap.dedent(f"""\ 
             ══恶魔轮盘══
             -- 血量状况 --
             玩家1 ({p1["name"]})：{p1["hp"]}/6
@@ -257,8 +257,8 @@ class BuckshotRoulette(Star):
         """)
         msg += "\n".join(f"{it} ({self.item_list[it]['description']})" for it in p2["item"])
         msg += textwrap.dedent(f"""\n
-            请发送道具名以使用对应道具，
-            或发送“自己” / “对方” 来开枪！
+            请发送道具名以使用对应道具,
+            或发送“自己” / “对方” 来开枪!
         """)
         yield event.plain_result(msg)
 
@@ -277,9 +277,9 @@ class BuckshotRoulette(Star):
             yield event.plain_result("══恶魔轮盘══\n只有游戏参与者或管理员可以结束游戏。")
             return
         del self.games[cid]
-        yield event.plain_result(f"══恶魔轮盘══\n{self.at_id(event.get_sender_id())} 已强制结束当前游戏。")
+        yield event.plain_result(f"══恶魔轮盘══\n{self.at_id(event.get_sender_name())} 已强制结束当前游戏。")
 
-    # ----------------- 商店兑换功能 -----------------
+    # ------------- 商店兑换功能 -------------
     @demon_roulette.command("兑换")
     async def exchange_item(self, event: AstrMessageEvent, source: str, target: str):
         """
@@ -313,10 +313,10 @@ class BuckshotRoulette(Star):
         game[cur_player]["item"].append(target)
         yield event.plain_result(f"兑换成功：2个【{source}】已兑换为1个【{target}】！")
 
-    # ----------------- Debug 模式（仅管理员可用） -----------------
+    # ------------- Debug 模式（仅管理员可用） -------------
     @demon_roulette.group("debug")
     def debug(self):
-        """Debug模式：仅限管理员使用，可用于给玩家道具、修改血量、查询状态等"""
+        """Debug模式：仅限管理员使用，用于给玩家道具、修改血量、查询状态等"""
         pass
 
     @debug.command("给道具")
@@ -385,7 +385,7 @@ class BuckshotRoulette(Star):
             return
         yield event.plain_result(f"当前游戏数据：{self.games[cid]}")
 
-    # ----------------- 消息监听 -----------------
+    # ------------- 消息监听 -------------
     @event_message_type(EventMessageType.ALL)
     async def on_message(self, event: AstrMessageEvent):
         """
@@ -408,10 +408,10 @@ class BuckshotRoulette(Star):
             async for msg_ret in self.use_item(cid, content, event):
                 yield msg_ret
 
-    # ----------------- 核心函数：开枪 -----------------
+    # ------------- 核心函数：开枪 -------------
     async def fire(self, cid: str, target: str, event: AstrMessageEvent):
         """
-        开枪逻辑：根据枪膛中子弹类型计算伤害、切换回合或结束游戏，
+        开枪逻辑：根据枪膛中子弹的类型计算伤害、切换回合或结束游戏，
         并反馈详细情景描述。
         """
         game = self.games[cid]
@@ -448,12 +448,12 @@ class BuckshotRoulette(Star):
                             yield event.plain_result(ln)
                         return
         if bullet == "空包弹" and target == "自己":
-            text += "\n幸好只是空包弹，你依然保有行动权！"
+            text += "\n幸好只是空包弹，你仍保有行动权！"
         else:
             if not game[oth_p]["handcuff"]:
                 game["currentTurn"] = 1 if game["currentTurn"] == 2 else 2
                 new_p = f"player{game['currentTurn']}"
-                text += f"\n切换回合：现在由 {self.at_id(game[new_p]['id'])} 决定下一步！"
+                text += f"\n切换回合：现在由 {self.at_id(game[new_p]['name'])} 决定下一步！"
                 game["usedHandcuff"] = False
             else:
                 game[oth_p]["handcuff"] = False
@@ -479,18 +479,18 @@ class BuckshotRoulette(Star):
             game[oth_p]["item"].append(random.choice(item_pool))
         game["player1"]["item"] = game["player1"]["item"][:8]
         game["player2"]["item"] = game["player2"]["item"][:8]
-        msg = textwrap.dedent(f"""\
+        msg = textwrap.dedent(f"""\ 
             ══恶魔轮盘══
             弹夹打空，进入第 {game["round"]} 轮！
             新弹夹中共有 {len(bullet_list)} 发子弹，
-            其中实弹 {self.count_bullet(bullet_list, "实弹")} 发，空包弹 {self.count_bullet(bullet_list, "空包弹")} 发。
+            其中实弹 {self.count_bullet(bullet_list, "实弹")} 发, 空包弹 {self.count_bullet(bullet_list, "空包弹")} 发.
             双方各获得 {item_count} 个随机道具（上限 8）。
         """)
         return msg
 
     async def use_item(self, cid: str, item: str, event: AstrMessageEvent):
         """
-        使用道具：调用对应道具效果，将反馈信息发送至聊天，
+        使用道具：调用对应道具效果，并将反馈信息发送到聊天，
         使用成功后从玩家背包中移除该道具。
         """
         game = self.games[cid]
@@ -503,7 +503,7 @@ class BuckshotRoulette(Star):
             game[cur_p]["item"].remove(item)
             yield event.plain_result(f"【{item}】已从你的背包中移除，希望这能助你一臂之力！")
 
-    # ----------------- 各道具具体实现 -----------------
+    # ------------- 各道具具体实现 -------------
     @staticmethod
     async def use_saw(plugin, cid, cur_player, pick, event):
         """手锯：下一发造成双倍伤害，不可叠加"""
@@ -531,7 +531,7 @@ class BuckshotRoulette(Star):
         """啤酒：卸下当前膛内的一发子弹"""
         g = plugin.games[cid]
         if not g["bullet"]:
-            return ["你试图用啤酒卸下子弹，但枪膛已经空了……"]
+            return ["你试图用啤酒卸下子弹，但枪膛已空。"]
         bullet = g["bullet"].pop()
         msg = [
             "你大口喝下冰镇啤酒，猛然敲击枪膛……",
@@ -562,7 +562,7 @@ class BuckshotRoulette(Star):
         """手铐：让对方跳过下一回合"""
         g = plugin.games[cid]
         if g.get("usedHandcuff", False):
-            return ["你试图再次使用手铐，但本回合已使用过，请冷静。"]
+            return ["你试图再次使用手铐，但本回合已使用，请冷静。"]
         other_p = f"player{1 if g['currentTurn'] == 2 else 2}"
         g[other_p]["handcuff"] = True
         g["usedHandcuff"] = True
@@ -590,7 +590,7 @@ class BuckshotRoulette(Star):
                     你吞下药剂后，胃中剧痛难忍……
                     眼前一黑，你彻底倒下。
                     
-                    {plugin.at_id(g[other_p]['id'])} 获得了最终胜利！
+                    {plugin.at_id(g[other_p]["name"])} 获得了最终胜利！
                 """)
                 await event.plain_result(msg)
                 lines = plugin.game_over(cid, winner=other_p, loser=cur_player)
@@ -669,18 +669,18 @@ class BuckshotRoulette(Star):
         g[cur_player]["shield"] = True
         return ["你装备了护盾，下一次受到攻击时将自动抵消伤害！"]
 
-    # ----------------- 游戏结束及辅助函数 -----------------
+    # ------------- 游戏结束及辅助函数 -------------
     def game_over(self, cid: str, winner: str, loser: str):
         """
         宣告胜者并删除当前游戏数据。
         """
         g = self.games[cid]
-        w_id = g[winner]["id"]
-        l_id = g[loser]["id"]
+        winner_name = g[winner]["name"]
+        loser_name = g[loser]["name"]
         text = textwrap.dedent(f"""\
             ══恶魔轮盘══
-            {self.at_id(l_id)} 倒下了！
-            {self.at_id(w_id)} 获得了最终胜利！
+            {self.at_id(loser_name)} 倒下了！
+            {self.at_id(winner_name)} 获得了最终胜利！
             游戏正式结束，感谢参与，期待下次再战！
         """)
         del self.games[cid]
@@ -690,9 +690,14 @@ class BuckshotRoulette(Star):
         """统计列表中指定类型子弹的数量"""
         return sum(1 for b in bullet_list if b == key)
 
-    def at_id(self, user_id: str) -> str:
+    def at_id(self, nickname: str) -> str:
         """
-        返回适用于 QQ 协议的 At 消息格式（CQ码写法）。
-        若在微信等平台，则可修改为纯文本显示。
+        返回适用于当前平台的@消息格式。
+        若为微信平台（例如 adapter_name 包含 "wechat" 或 "gewechat"），则直接返回 "@{nickname}"，
+        否则返回 QQ 的 CQ 码格式，例如 "[CQ:at,qq={nickname}]"。
         """
-        return f"[CQ:at,qq={user_id}]"
+        adapter = self.context.adapter_name.lower() if hasattr(self.context, "adapter_name") else ""
+        if "wechat" in adapter or "gewechat" in adapter:
+            return f"@{nickname}"
+        else:
+            return f"[CQ:at,qq={nickname}]"
