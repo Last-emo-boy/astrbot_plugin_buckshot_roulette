@@ -22,7 +22,7 @@ def generate_random_bullet_list():
     "astrbot_plugin_buckshot_roulette",  # 插件唯一识别名
     "w33d",                              # 作者
     "恶魔轮盘 - Buckshot Roulette",       # 简短描述
-    "1.1.0"                              # 版本号
+    "1.1.1"                              # 版本号
 )
 class BuckshotRoulette(Star):
     """
@@ -129,13 +129,7 @@ class BuckshotRoulette(Star):
                 "status": "waiting",
             }
             asyncio.create_task(self.wait_for_join_timeout(cid, event))
-            yield event.plain_result(textwrap.dedent(f"""\ 
-            ══恶魔轮盘══
-            游戏创建成功！
-            玩家1：{event.get_sender_name()} ({event.get_sender_id()})
-            玩家2：正在等待中……
-            
-            请发送“/恶魔轮盘 加入游戏”加入本游戏，超时后将自动取消！
+            yield event.plain_result(textwrap.dedent(f""" ══恶魔轮盘══\n游戏创建成功！\n玩家1：{event.get_sender_name()} ({event.get_sender_id()})\n玩家2：正在等待中……\n\n请发送“/恶魔轮盘 加入游戏”加入本游戏，超时后将自动取消！
             """))
         else:
             status = self.games[cid].get("status", "")
@@ -180,12 +174,7 @@ class BuckshotRoulette(Star):
         }
         self.games[cid]["status"] = "full"
         yield event.plain_result(textwrap.dedent(f"""\ 
-            ══恶魔轮盘══
-            成功加入游戏！
-            玩家1：{self.games[cid]['player1']['name']} ({self.games[cid]['player1']['id']})
-            玩家2：{event.get_sender_name()} ({event.get_sender_id()})
-            
-            请由玩家1发送“/恶魔轮盘 开始游戏”以正式开始对战！
+            ══恶魔轮盘══\n成功加入游戏！\n玩家1：{self.games[cid]['player1']['name']} ({self.games[cid]['player1']['id']})\n玩家2：{event.get_sender_name()} ({event.get_sender_id()})\n\n请由玩家1发送“/恶魔轮盘 开始游戏”以正式开始对战！
             """))
 
     @demon_roulette.command("开始游戏")
@@ -220,15 +209,7 @@ class BuckshotRoulette(Star):
             self.games[cid][second_p]["item"].append(random.choice(list(self.item_list.keys())))
         bullet_list = self.games[cid]["bullet"]
         yield event.plain_result(textwrap.dedent(f"""\ 
-            ══恶魔轮盘══
-            游戏开始!
-            玩家1：{self.games[cid]["player1"]["name"]} ({self.games[cid]["player1"]["id"]})
-            玩家2：{self.games[cid]["player2"]["name"]} ({self.games[cid]["player2"]["id"]})
-            由 {self.at_id(self.games[cid][first_p]["name"])} 先手!
-            先手获得 {item_count_base - 1} 个道具，后手获得 {item_count_base} 个道具.
-            当前弹夹中共有 {len(bullet_list)} 发子弹,
-            其中实弹 {self.count_bullet(bullet_list, "实弹")} 发, 空包弹 {self.count_bullet(bullet_list, "空包弹")} 发.
-            请发送“/恶魔轮盘 对战信息”查看详细情况，祝你好运!
+            ══恶魔轮盘══\n游戏开始!\n玩家1：{self.games[cid]["player1"]["name"]} ({self.games[cid]["player1"]["id"]})\n玩家2：{self.games[cid]["player2"]["name"]} ({self.games[cid]["player2"]["id"]})\n由 {self.at_id(self.games[cid][first_p]["name"])} 先手!\n先手获得 {item_count_base - 1} 个道具，后手获得 {item_count_base} 个道具.\n当前弹夹中共有 {len(bullet_list)} 发子弹,\n其中实弹 {self.count_bullet(bullet_list, "实弹")} 发, 空包弹 {self.count_bullet(bullet_list, "空包弹")} 发.\n请发送“/恶魔轮盘 对战信息”查看详细情况，祝你好运!
         """))
 
     @demon_roulette.command("对战信息")
@@ -244,10 +225,7 @@ class BuckshotRoulette(Star):
         p1 = g["player1"]
         p2 = g["player2"]
         msg = textwrap.dedent(f"""\ 
-            ══恶魔轮盘══
-            -- 血量状况 --
-            玩家1 ({p1["name"]})：{p1["hp"]}/6
-            玩家2 ({p2["name"]})：{p2["hp"]}/6
+            ══恶魔轮盘══\n-- 血量状况 --\n玩家1 ({p1["name"]})：{p1["hp"]}/6\n玩家2 ({p2["name"]})：{p2["hp"]}/6
 
             -- 玩家1的道具 ({len(p1["item"])}/8) --
         """)
@@ -696,8 +674,4 @@ class BuckshotRoulette(Star):
         若为微信平台（例如 adapter_name 包含 "wechat" 或 "gewechat"），则直接返回 "@{nickname}"，
         否则返回 QQ 的 CQ 码格式，例如 "[CQ:at,qq={nickname}]"。
         """
-        adapter = self.context.adapter_name.lower() if hasattr(self.context, "adapter_name") else ""
-        if "wechat" in adapter or "gewechat" in adapter:
-            return f"@{nickname}"
-        else:
-            return f"[CQ:at,qq={nickname}]"
+        return f"@{nickname}"
